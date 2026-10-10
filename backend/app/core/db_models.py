@@ -50,3 +50,16 @@ class FactCheck(Base):
             postgresql_ops={"embedding": "vector_cosine_ops"},
         ),
     )
+
+
+class ImageHash(Base):
+    """Perceptual hashes of checked images (never the images themselves)."""
+
+    __tablename__ = "image_hashes"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    phash: Mapped[str] = mapped_column(String(16), index=True)
+    times_seen: Mapped[int] = mapped_column(default=1)
+    first_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    last_verdict: Mapped[str | None] = mapped_column(String(16))

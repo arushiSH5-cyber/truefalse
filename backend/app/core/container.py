@@ -1,12 +1,17 @@
 """Builds real dependencies from settings. Tests build fakes instead (tests/fakes.py)."""
 
+import importlib.util
+
 import httpx
 
 from app.core.config import Settings
 from app.core.db import get_engine
-from app.core.llm import AnthropicLLM
+from app.core.llm import AnthropicLLM, LLMClient
 from app.core.logging import get_logger
 from app.matching.factcheck_index import FactCheckIndex, PgFactCheckIndex
+from app.modality.hashes import PgImageHashStore
+from app.modality.links import YtDlpDownloader
+from app.modality.process import MediaFetcher, MediaProviders
 from app.pipeline import Deps, PipelineConfig
 from app.research.sources.base import Source
 from app.research.sources.factcheck_api import GoogleFactCheckSource
@@ -57,7 +62,33 @@ def build_index(settings: Settings) -> FactCheckIndex | None:
     )
 
 
-def build_deps(settings: Settings, http: httpx.AsyncClient) -> Deps:
+def build_media(
+    settings: Settings, llm: LLMClient, http: httpx.AsyncClient, fetcher: MediaFetcher | None
+) -> MediaProviders | None:
+    if not settings.media_enabled:
+        return None
+    stt = downloader = None
+    if importlib.util.find_spec("faster_whisper"):
+        from app.modality.audio import FasterWhisperSTT
+
+        stt = FasterWhisperSTT(settings.whisper_model)
+    if importlib.util.find_spec("yt_dlp"):
+        downloader = YtDlpDownloader(max_duration_s=settings.max_media_seconds)
+    hashes = PgImageHashStore(get_engine(settings.database_url)) if settings.image_hash_db else None
+    log.info(
+        "media_enabled",
+        stt=stt is not None,
+        downloader=downloader is not None,
+        image_hashes=hashes is not None,
+    )
+    return MediaProviders(
+        llm=llm, fetcher=fetcher, stt=stt, hashes=hashes, http=http, downloader=downloader
+    )
+
+
+def build_deps(
+    settings: Settings, http: httpx.AsyncClient, fetcher: MediaFetcher | None = None
+) -> Deps:
     api_key = _secret(settings.anthropic_api_key)
     if not api_key:
         raise ConfigError("ANTHROPIC_API_KEY is not set")
@@ -77,4 +108,5 @@ def build_deps(settings: Settings, http: httpx.AsyncClient) -> Deps:
             match_strong_threshold=settings.match_strong_threshold,
         ),
         index=build_index(settings),
+        media=build_media(settings, llm, http, fetcher),
     )

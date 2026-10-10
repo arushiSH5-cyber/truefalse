@@ -34,8 +34,12 @@ def test_parse_text() -> None:
 def test_parse_command_and_media() -> None:
     assert parse_update(_update(text="/start@TrueFalseBot"), SALT).command == "start"
     photo_only = parse_update(_update(photo=[{"file_id": "s"}, {"file_id": "big"}]), SALT)
-    assert photo_only.has_unsupported_media
+    assert not photo_only.has_unsupported_media
     assert photo_only.submission.parts[0].media_ref == "big"
+    pdf = parse_update(_update(document={"file_id": "d", "mime_type": "application/pdf"}), SALT)
+    assert pdf.has_unsupported_media and pdf.submission.parts == []
+    img_doc = parse_update(_update(document={"file_id": "d", "mime_type": "image/png"}), SALT)
+    assert img_doc.submission.parts[0].kind is PartKind.IMAGE
     with_caption = parse_update(_update(photo=[{"file_id": "x"}], caption="Is this real?"), SALT)
     assert not with_caption.has_unsupported_media
     assert with_caption.submission.parts[0].kind is PartKind.TEXT

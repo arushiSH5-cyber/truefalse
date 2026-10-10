@@ -21,6 +21,13 @@ from app.core.models import (
 )
 from app.core.trace import RunTrace, current_trace
 from app.matching.factcheck_index import FactCheckIndex
+from app.modality.media import temp_workdir
+from app.modality.process import (
+    MediaProviders,
+    ProcessedContent,
+    ProgressFn,
+    process_submission,
+)
 from app.research.agent import research
 from app.research.sources.base import Source
 from app.respond.compose import compose, render_text
@@ -52,6 +59,24 @@ class Deps:
     sources: Sequence[Source]
     config: PipelineConfig = field(default_factory=PipelineConfig)
     index: FactCheckIndex | None = None
+    media: MediaProviders | None = None
+
+
+def seen_before_warnings(processed: ProcessedContent) -> list[str]:
+    out = []
+    for seen in processed.seen_before:
+        rated = f" Back then we rated it {seen.last_verdict.value}." if seen.last_verdict else ""
+        out.append(f"This picture has been sent to us {seen.times_seen} time(s) before.{rated}")
+    return out
+
+
+async def process_content(
+    submission: Submission, deps: Deps, progress: ProgressFn | None
+) -> ProcessedContent:
+    if deps.media is None:
+        return ProcessedContent(text=submission_text(submission))
+    with temp_workdir() as workdir:  # raw media is always deleted afterwards
+        return await process_submission(submission, deps.media, workdir, progress)
 
 
 async def match_factchecks(
@@ -95,22 +120,39 @@ def _cited_sources(
 
 
 async def run_check(
-    submission: Submission, deps: Deps, trace: RunTrace | None = None
+    submission: Submission,
+    deps: Deps,
+    trace: RunTrace | None = None,
+    progress: ProgressFn | None = None,
 ) -> CheckReport:
     trace = trace or RunTrace()
     token = current_trace.set(trace)
     try:
-        return await _run(submission, deps, trace)
+        return await _run(submission, deps, trace, progress)
     finally:
         current_trace.reset(token)
 
 
-async def _run(submission: Submission, deps: Deps, trace: RunTrace) -> CheckReport:
+async def _run(
+    submission: Submission, deps: Deps, trace: RunTrace, progress: ProgressFn | None
+) -> CheckReport:
     cfg = deps.config
-    text = submission_text(submission)
+    with trace.timed("modality"):
+        processed = await process_content(submission, deps, progress)
+    text = processed.text
 
     with trace.timed("extract"):
-        extraction = await extract_claims(deps.llm, text, max_claims=cfg.max_claims)
+        if text.strip():
+            extraction = await extract_claims(deps.llm, text, max_claims=cfg.max_claims)
+        else:  # e.g. every media part failed to open
+            extraction = Extraction(
+                language=(submission.language_hint or "en").split("-")[0],
+                language_name="the user's language",
+                script="",
+                romanized_or_mixed=False,
+                looks_like_satire_or_opinion=False,
+                claims=[],
+            )
 
     evidence: list[Evidence] = []
     judgements: list[ClaimJudgement] = []
@@ -152,7 +194,14 @@ async def _run(submission: Submission, deps: Deps, trace: RunTrace) -> CheckRepo
     warnings = topic_rules.warnings(
         extraction, judgements, by_id, sources_disagree=any(d.judges_disagree for d in decisions)
     )
+    warnings = processed.warnings + seen_before_warnings(processed) + warnings
     note = topic_rules.safety_note(extraction.claims, judgements)
+    if deps.media and deps.media.hashes:
+        for phash in processed.image_hashes:
+            try:
+                await deps.media.hashes.record(phash, overall)
+            except Exception as exc:
+                log.warning("hash_record_failed", error=str(exc))
     sources = _cited_sources(judgements, by_id)
 
     with trace.timed("compose"):

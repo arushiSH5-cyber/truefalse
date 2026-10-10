@@ -66,6 +66,7 @@ async def test_false_health_claim_full_flow(
     assert "not doctors" in compose_call["user"]  # health note passed for translation
     assert "could harm" in compose_call["user"]  # danger note for harmful false claim
     assert set(trace.stages) == {
+        "modality",
         "extract",
         "match",
         "research",

@@ -1,6 +1,8 @@
 """Telegram adapter: webhook update -> Submission, and a Messenger that sends replies."""
 
+from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -40,6 +42,16 @@ class TgUpdate(BaseModel):
     message: _TgMessage | None = None
 
 
+_DOC_KINDS = {"image": PartKind.IMAGE, "video": PartKind.VIDEO, "audio": PartKind.AUDIO}
+
+# Bot API getFile can only download files up to 20 MB.
+TELEGRAM_MAX_DOWNLOAD = 20 * 1024 * 1024
+
+
+class MediaTooLargeError(Exception):
+    pass
+
+
 def parse_update(data: dict[str, Any], salt: str) -> Inbound | None:
     update = TgUpdate.model_validate(data)
     msg = update.message
@@ -56,7 +68,7 @@ def parse_update(data: dict[str, Any], salt: str) -> Inbound | None:
         else:
             parts.append(Part(kind=PartKind.TEXT, text=stripped))
 
-    # Media is recorded by reference only; Phase 5 adds processing.
+    # Media is passed by Telegram file_id; the worker downloads it into a temp dir.
     if msg.photo:
         parts.append(Part(kind=PartKind.IMAGE, media_ref=msg.photo[-1].get("file_id")))
     for media, kind in (
@@ -67,6 +79,13 @@ def parse_update(data: dict[str, Any], salt: str) -> Inbound | None:
     ):
         if media:
             parts.append(Part(kind=kind, media_ref=media.get("file_id")))
+    unsupported_doc = False
+    if msg.document:
+        doc_kind = _DOC_KINDS.get(str(msg.document.get("mime_type", "")).split("/")[0])
+        if doc_kind:
+            parts.append(Part(kind=doc_kind, media_ref=msg.document.get("file_id")))
+        else:
+            unsupported_doc = True
 
     submission = Submission(
         platform=Platform.TELEGRAM,
@@ -79,13 +98,11 @@ def parse_update(data: dict[str, Any], salt: str) -> Inbound | None:
         chat_id=str(msg.chat.id),
         reply_to_message_id=str(msg.message_id),
     )
-    has_text = any(p.kind is PartKind.TEXT for p in parts)
-    has_media = any(p.kind is not PartKind.TEXT for p in parts) or msg.document is not None
     return Inbound(
         submission=submission,
         target=target,
         command=command,
-        has_unsupported_media=has_media and not has_text,
+        has_unsupported_media=unsupported_doc and not parts,
     )
 
 
@@ -106,6 +123,10 @@ class TelegramMessenger:
         if not self._ready:
             await self._bot.initialize()
             self._ready = True
+
+    async def bot(self) -> Any:
+        await self._ensure()
+        return self._bot
 
     async def send_text(self, target: ReplyTarget, text: str) -> None:
         from telegram import LinkPreviewOptions, ReplyParameters
@@ -133,3 +154,26 @@ class TelegramMessenger:
         if self._ready:
             await self._bot.shutdown()
             self._ready = False
+
+
+class TelegramMediaFetcher:
+    """Downloads Telegram media by file_id into the request's temp dir."""
+
+    def __init__(self, messenger: TelegramMessenger) -> None:
+        self._messenger = messenger
+
+    async def fetch(self, part: Part, dest_dir: Path) -> Path:
+        if not part.media_ref:
+            raise ValueError("part has no media reference")
+        bot = await self._messenger.bot()
+        tg_file = await bot.get_file(part.media_ref)
+        if tg_file.file_size and tg_file.file_size > TELEGRAM_MAX_DOWNLOAD:
+            raise MediaTooLargeError(f"{tg_file.file_size} bytes")
+        suffix = Path(tg_file.file_path or "").suffix or {
+            PartKind.IMAGE: ".jpg",
+            PartKind.AUDIO: ".ogg",
+            PartKind.VIDEO: ".mp4",
+        }.get(part.kind, ".bin")
+        dest = dest_dir / f"{uuid4().hex}{suffix}"
+        await tg_file.download_to_drive(custom_path=dest)
+        return dest

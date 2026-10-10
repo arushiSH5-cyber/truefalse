@@ -11,8 +11,8 @@ from app.core.models import ReplyTarget, Submission
 from app.core.queue import redis_settings
 from app.core.trace import RunTrace
 from app.ingestion.base import Messenger
-from app.ingestion.common import FAILURE
-from app.ingestion.telegram import TelegramMessenger
+from app.ingestion.common import FAILURE, WORKING_ON_MEDIA, localized
+from app.ingestion.telegram import TelegramMediaFetcher, TelegramMessenger
 from app.pipeline import Deps, run_check
 
 log = get_logger(__name__)
@@ -28,8 +28,16 @@ async def process(
     trace = RunTrace()
     with contextlib.suppress(Exception):
         await messenger.send_typing(target)
+
+    async def progress(kind: str) -> None:
+        if kind == "media":
+            with contextlib.suppress(Exception):
+                await messenger.send_text(
+                    target, localized(WORKING_ON_MEDIA, submission.language_hint)
+                )
+
     try:
-        report = await run_check(submission, deps, trace)
+        report = await run_check(submission, deps, trace, progress)
         text = report.reply_text
         status = "ok"
     except Exception as exc:
@@ -72,8 +80,8 @@ async def startup(ctx: dict[str, Any]) -> None:
     if token is None:
         raise RuntimeError("TELEGRAM_BOT_TOKEN is not set")
     ctx["http"] = build_http_client(settings)
-    ctx["deps"] = build_deps(settings, ctx["http"])
     ctx["messenger"] = TelegramMessenger(token.get_secret_value(), settings.http_timeout_seconds)
+    ctx["deps"] = build_deps(settings, ctx["http"], fetcher=TelegramMediaFetcher(ctx["messenger"]))
     ctx["prices"] = (settings.llm_input_price_per_mtok, settings.llm_output_price_per_mtok)
     log.info("worker_startup", model=settings.anthropic_model)
 

@@ -42,7 +42,18 @@ Repo: https://github.com/arushiSH5-cyber/truefalse
 - **Warnings**: "sources disagree" is added. Metrics now log agreement, probability and grounded ratio per claim.
 - **Tests**: 97 passing (ratings in many languages, calibration fit/ECE, panel voting edge cases, judge failure, grounding drop/fallback)
 
-## Next: Phase 5, multimodal
+### Phase 5: Multimodal (2026-10-10)
+- **Images/screenshots** (`modality/image.py`, `media.py`): Claude vision OCR + neutral description + concrete editing/AI-generation cues (`image_read.v1`). Images are EXIF-rotated, downscaled to ≤1568 px and recompressed before upload.
+- **Seen before** (`modality/hashes.py`): a 64-bit perceptual hash (pHash, Hamming ≤ 8) records how often an image was checked and its last verdict. Only the hash is stored, never the image (Postgres table `image_hashes`, migration `0002`).
+- **Voice notes/audio** (`modality/audio.py`): `FasterWhisperSTT` (multilingual, detects language). Long audio is split into ~60 s chunks, and a cheap LLM pass (`segment_filter.v1`) keeps only claim-bearing chunks (≤ 8), with timestamps.
+- **Video** (`modality/video.py`): ffmpeg subprocesses with hard timeouts extract 16 kHz audio and 4 evenly spaced keyframes, which are analyzed in one vision call.
+- **Links** (`modality/links.py`): reels, shorts, TikToks, podcasts etc. via yt-dlp (allow-listed public media hosts, no cookies or logins, duration and size caps; short clips keep video for keyframes); X posts via the public oEmbed endpoint; articles via trafilatura or a built-in HTML extractor
+- **SSRF protection**: http(s) only, ports 80/443, no credentials in URLs, every redirect hop re-resolved, and private/loopback/link-local/metadata addresses refused; HTML capped at 2 MB
+- **Privacy**: every request uses a temp dir that is always deleted, including on errors (tested)
+- **Pipeline**: a new `modality` stage; media warnings (possibly edited, possibly AI-generated, auto-transcribed, part failed to open, seen before with its earlier verdict); progress message "Looking at your media…" localized; Telegram photos/voice/audio/video/video notes/image-video-audio documents
+- **Tests**: 120 passing, including real ffmpeg on a generated video, a pHash robustness test, SSRF rejection cases, a redirect-to-metadata attack, article extraction, oEmbed, and long-audio chunk selection
+
+## Next: Phase 6, every language
 
 ## Deferred (planned in later phases)
 - Per-user state: first-time welcome in the detected language, language switching ("Español"), opt-in digest. These need a users table and come with Phase 3 migrations or Phase 9.
@@ -51,6 +62,7 @@ Repo: https://github.com/arushiSH5-cyber/truefalse
 - fastText lid-218 as a fast language pre-check (Phase 6)
 
 ## Blockers / notes
+- Voice/video/reels need `uv sync --extra media` (faster-whisper, yt-dlp) and have not been run against real downloads; yt-dlp site support changes often, so keep it updated. The SSRF check resolves DNS before httpx connects (a small DNS-rebinding window remains; a pinned-IP transport would close it).
 - **Not yet run against real APIs.** Every external call is tested only against fakes and saved sample responses. The first live run needs `ANTHROPIC_API_KEY` + `TELEGRAM_BOT_TOKEN` (and ideally `GOOGLE_FACTCHECK_API_KEY` and a Brave `SEARCH_API_KEY`).
 - The real E5 model test (`-m ml`) has not been run: it needs `uv sync --extra ml` (PyTorch, ~2 GB). `MATCH_STRONG_THRESHOLD=0.88` is a starting guess; tune it in Phase 8 evaluation.
 - Docker and uv are not installed on the dev Mac, so `docker compose up` has not been run locally. CI covers lint, types and tests on Python 3.12.

@@ -45,6 +45,13 @@ class Settings(BaseSettings):
     # Cosine similarity (E5, normalized) above which an indexed fact-check counts as a match
     match_strong_threshold: float = Field(default=0.88, ge=0, le=1)
 
+    # Media (Phase 5). Images and article links work out of the box; voice/video need the
+    # `media` extra (faster-whisper, yt-dlp) and ffmpeg.
+    media_enabled: bool = True
+    whisper_model: str = "small"
+    max_media_seconds: int = Field(default=3600, gt=0)
+    image_hash_db: bool = False  # remember perceptual hashes in Postgres ("seen before")
+
     # Pipeline limits
     max_claims: int = Field(default=3, ge=1, le=10)
     research_max_tool_calls: int = Field(default=8, ge=0, le=30)

@@ -69,8 +69,9 @@ class FakeLLM:
         output: type[T],
         effort: Effort = "medium",
         max_tokens: int = 8000,
+        images: Sequence[Any] = (),
     ) -> T:
-        self.calls.append({"stage": stage, "system": system, "user": user})
+        self.calls.append({"stage": stage, "system": system, "user": user, "images": len(images)})
         record_tokens(stage, 100, 50)
         if stage == "ground" and not self.outputs[stage] and self.auto_ground:
             return self._all_supported(user, output)

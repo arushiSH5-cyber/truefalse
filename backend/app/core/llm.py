@@ -48,6 +48,12 @@ class Tool:
         }
 
 
+@dataclass(frozen=True)
+class ImageInput:
+    media_type: str  # image/jpeg, image/png, image/webp, image/gif
+    data_b64: str
+
+
 class LLMClient(Protocol):
     async def structured(
         self,
@@ -58,6 +64,7 @@ class LLMClient(Protocol):
         output: type[T],
         effort: Effort = "medium",
         max_tokens: int = 8000,
+        images: Sequence[ImageInput] = (),
     ) -> T: ...
 
     async def run_tools(
@@ -112,13 +119,23 @@ class AnthropicLLM:
         output: type[T],
         effort: Effort = "medium",
         max_tokens: int = 8000,
+        images: Sequence[ImageInput] = (),
     ) -> T:
+        content: Any = user
+        if images:
+            content = [
+                {
+                    "type": "image",
+                    "source": {"type": "base64", "media_type": i.media_type, "data": i.data_b64},
+                }
+                for i in images
+            ] + [{"type": "text", "text": user}]
         try:
             response = await self._client.beta.messages.parse(
                 model=self._model,
                 max_tokens=max_tokens,
                 system=system,
-                messages=[{"role": "user", "content": user}],
+                messages=[{"role": "user", "content": content}],
                 output_format=output,
                 output_config={"effort": effort},
                 betas=self._betas,

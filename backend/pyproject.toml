@@ -23,12 +23,20 @@ dependencies = [
     "alembic>=1.13",
     "pgvector>=0.3",
     "numpy>=1.26",
+    "pillow>=10.4",
+    "imagehash>=4.3",
 ]
 
 [project.optional-dependencies]
 # Heavy ML extras; install with `uv sync --extra ml`
 ml = [
     "sentence-transformers>=3.0",
+]
+# Speech-to-text, public video/podcast download, article extraction; `uv sync --extra media`
+media = [
+    "faster-whisper>=1.0",
+    "yt-dlp>=2024.8.6",
+    "trafilatura>=1.12",
 ]
 
 [dependency-groups]
@@ -68,4 +76,4 @@ markers = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/*" = ["E501"]
+"tests/*" = ["E501", "ASYNC240"]
