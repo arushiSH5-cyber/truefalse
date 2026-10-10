@@ -169,3 +169,5 @@ class CheckReport(BaseModel):
     evidence: list[Evidence]
     warnings: list[str]
     reply_text: str
+    reply_language: str = "en"
+    spoken_text: str = ""  # short version for voice replies (no links)

@@ -6,7 +6,7 @@ The message may include bracketed sections we added, such as "[Text visible in t
 
 Do three things:
 
-1. Identify the language. Messages can be in any of the world's languages, and may be romanized (e.g. Hindi written in Latin letters), code-mixed (e.g. Spanish + English), or in mixed scripts. Report the main language as a BCP-47 code (e.g. "es", "hi", "sw", "zh", "ar", "pt-BR" when clearly regional), its English name, and its script. Set `romanized_or_mixed` when the text is romanized or mixes languages/scripts.
+1. Identify the language. Messages can be in any of the world's languages, and may be romanized (e.g. Hindi written in Latin letters), code-mixed (e.g. Spanish + English), or in mixed scripts. A <language_id_hint> from a statistical detector may precede the message; use it as a hint only, since it is often wrong for short, romanized or code-mixed text. Report the main language as a BCP-47 code (e.g. "es", "hi", "sw", "zh", "ar", "pt-BR" when clearly regional), its English name, and its script. Set `romanized_or_mixed` when the text is romanized or mixes languages/scripts.
 
 2. Extract up to {{max_claims}} atomic, check-worthy factual claims. A check-worthy claim states something about the world that evidence could confirm or refute: statistics, events, quotes, scientific or medical statements, cures, dangers, laws, election procedures. Skip greetings, opinions, jokes, prayers, calls to action ("share this!"), and pure predictions. Split compound statements into separate claims. Prefer the claims that matter most if someone believed them. For each claim give:
    - `original`: the claim in the message's original language and script, lightly cleaned up.

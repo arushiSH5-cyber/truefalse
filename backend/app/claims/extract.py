@@ -7,11 +7,14 @@ from app.core.models import Extraction
 MAX_INPUT_CHARS = 6000
 
 
-async def extract_claims(llm: LLMClient, text: str, *, max_claims: int) -> Extraction:
+async def extract_claims(
+    llm: LLMClient, text: str, *, max_claims: int, language_hint: str | None = None
+) -> Extraction:
+    hint = f"<language_id_hint>{language_hint}</language_id_hint>\n" if language_hint else ""
     result = await llm.structured(
         stage="extract",
         system=prompts.render("claim_extract.v1", max_claims=str(max_claims)),
-        user=f"<message>\n{text[:MAX_INPUT_CHARS]}\n</message>",
+        user=f"{hint}<message>\n{text[:MAX_INPUT_CHARS]}\n</message>",
         output=Extraction,
         effort="low",
     )

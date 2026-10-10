@@ -108,6 +108,14 @@ uv run mypy app
 In production, use the webhook instead: run `docker compose up`, expose `/webhooks/telegram` over
 HTTPS, and call Telegram's `setWebhook` with `secret_token=$TELEGRAM_WEBHOOK_SECRET`.
 
+## Languages and voice
+
+- **Any language** works: the claim extractor detects the language (including romanized and code-mixed text), research runs through an English pivot, and replies come back in the user's language and script.
+- **Switch language** by sending just its name, in any language: `Español`, `हिंदी`, `العربية`, `Kiswahili`, `中文`… Send `/language` to go back to auto-detect.
+- **Voice**: a voice note gets a spoken reply. `/voice` turns spoken replies on for every answer. Needs `uv sync --extra voice` and ffmpeg.
+- **Less-tested languages** get a warning. The list comes from measured accuracy (`app/language/language_accuracy.json`, written by the eval harness) or falls back to a conservative default.
+- Optional fast language-ID pre-check: `uv sync --extra lid` and set `LID_MODEL_PATH` to a fastText model (e.g. NLLB's `lid218e.bin`).
+
 ## Engineering rules
 
 - All secrets come from environment variables. `.env.example` documents each one.

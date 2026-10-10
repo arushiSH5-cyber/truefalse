@@ -146,6 +146,11 @@ class TelegramMessenger:
             reply_parameters=reply,
         )
 
+    async def send_voice(self, target: ReplyTarget, ogg_path: str) -> None:
+        await self._ensure()
+        with open(ogg_path, "rb") as f:  # noqa: ASYNC230 - small local temp file
+            await self._bot.send_voice(chat_id=int(target.chat_id), voice=f)
+
     async def send_typing(self, target: ReplyTarget) -> None:
         await self._ensure()
         await self._bot.send_chat_action(chat_id=int(target.chat_id), action="typing")

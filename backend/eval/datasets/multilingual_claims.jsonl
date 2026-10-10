@@ -1,0 +1,30 @@
+{"id": "ml01", "language": "en", "script": "Latin", "romanized_or_mixed": false, "text": "Hot lemon water cures cancer.", "expected": "false", "acceptable": ["false"]}
+{"id": "ml02", "language": "es", "script": "Latin", "romanized_or_mixed": false, "text": "El agua caliente con limón cura el cáncer.", "expected": "false", "acceptable": ["false"]}
+{"id": "ml03", "language": "pt", "script": "Latin", "romanized_or_mixed": false, "text": "Água quente com limão cura o câncer.", "expected": "false", "acceptable": ["false"]}
+{"id": "ml04", "language": "fr", "script": "Latin", "romanized_or_mixed": false, "text": "L'eau chaude citronnée guérit le cancer.", "expected": "false", "acceptable": ["false"]}
+{"id": "ml05", "language": "ar", "script": "Arabic", "romanized_or_mixed": false, "text": "الماء الساخن مع الليمون يعالج السرطان.", "expected": "false", "acceptable": ["false"]}
+{"id": "ml06", "language": "zh", "script": "Han", "romanized_or_mixed": false, "text": "热柠檬水可以治愈癌症。", "expected": "false", "acceptable": ["false"]}
+{"id": "ml07", "language": "hi", "script": "Devanagari", "romanized_or_mixed": false, "text": "गर्म नींबू पानी कैंसर को ठीक करता है।", "expected": "false", "acceptable": ["false"]}
+{"id": "ml08", "language": "hi", "script": "Latin", "romanized_or_mixed": true, "text": "garam nimbu pani cancer ko theek karta hai", "expected": "false", "acceptable": ["false"]}
+{"id": "ml09", "language": "sw", "script": "Latin", "romanized_or_mixed": false, "text": "Maji ya moto yenye ndimu huponya saratani.", "expected": "false", "acceptable": ["false"]}
+{"id": "ml10", "language": "ru", "script": "Cyrillic", "romanized_or_mixed": false, "text": "Горячая вода с лимоном излечивает рак.", "expected": "false", "acceptable": ["false"]}
+{"id": "ml11", "language": "id", "script": "Latin", "romanized_or_mixed": false, "text": "Air hangat dengan lemon bisa menyembuhkan kanker.", "expected": "false", "acceptable": ["false"]}
+{"id": "ml12", "language": "ta", "script": "Tamil", "romanized_or_mixed": false, "text": "சூடான எலுமிச்சை நீர் புற்றுநோயை குணப்படுத்தும்.", "expected": "false", "acceptable": ["false"]}
+{"id": "ml13", "language": "bn", "script": "Bengali", "romanized_or_mixed": false, "text": "গরম লেবু জল ক্যান্সার সারায়।", "expected": "false", "acceptable": ["false"]}
+{"id": "ml14", "language": "ja", "script": "Japanese", "romanized_or_mixed": false, "text": "温かいレモン水はがんを治す。", "expected": "false", "acceptable": ["false"]}
+{"id": "ml15", "language": "ur", "script": "Arabic", "romanized_or_mixed": false, "text": "گرم لیموں پانی کینسر کا علاج کرتا ہے۔", "expected": "false", "acceptable": ["false"]}
+{"id": "ml16", "language": "en", "script": "Latin", "romanized_or_mixed": false, "text": "5G mobile networks spread COVID-19.", "expected": "false", "acceptable": ["false"]}
+{"id": "ml17", "language": "es", "script": "Latin", "romanized_or_mixed": false, "text": "Las redes 5G propagan la COVID-19.", "expected": "false", "acceptable": ["false"]}
+{"id": "ml18", "language": "ar", "script": "Arabic", "romanized_or_mixed": false, "text": "شبكات الجيل الخامس تنشر فيروس كورونا.", "expected": "false", "acceptable": ["false"]}
+{"id": "ml19", "language": "hi", "script": "Devanagari", "romanized_or_mixed": false, "text": "5G नेटवर्क से कोरोना वायरस फैलता है।", "expected": "false", "acceptable": ["false"]}
+{"id": "ml20", "language": "zh", "script": "Han", "romanized_or_mixed": false, "text": "5G网络传播新冠病毒。", "expected": "false", "acceptable": ["false"]}
+{"id": "ml21", "language": "ru", "script": "Cyrillic", "romanized_or_mixed": false, "text": "Сети 5G распространяют коронавирус.", "expected": "false", "acceptable": ["false"]}
+{"id": "ml22", "language": "pt", "script": "Latin", "romanized_or_mixed": false, "text": "As redes 5G espalham a COVID-19.", "expected": "false", "acceptable": ["false"]}
+{"id": "ml23", "language": "id", "script": "Latin", "romanized_or_mixed": false, "text": "Jaringan 5G menyebarkan virus corona.", "expected": "false", "acceptable": ["false"]}
+{"id": "ml24", "language": "sw", "script": "Latin", "romanized_or_mixed": false, "text": "Mitandao ya 5G inaeneza virusi vya corona.", "expected": "false", "acceptable": ["false"]}
+{"id": "ml25", "language": "hi", "script": "Latin", "romanized_or_mixed": true, "text": "Bhai ye sach hai kya, 5G towers se corona failta hai? Sabko forward karo!", "expected": "false", "acceptable": ["false"]}
+{"id": "ml26", "language": "es", "script": "Latin", "romanized_or_mixed": true, "text": "Bro, dicen que the vaccine has microchips, es verdad?", "expected": "false", "acceptable": ["false"]}
+{"id": "ml27", "language": "fr", "script": "Latin", "romanized_or_mixed": false, "text": "Se laver les mains avec du savon aide à prévenir les infections.", "expected": "true", "acceptable": ["true"]}
+{"id": "ml28", "language": "ar", "script": "Arabic", "romanized_or_mixed": false, "text": "غسل اليدين بالماء والصابون يساعد على منع انتشار العدوى.", "expected": "true", "acceptable": ["true"]}
+{"id": "ml29", "language": "ta", "script": "Latin", "romanized_or_mixed": true, "text": "Kai kazhuvinaal noi parappu kuraiyum nu solraanga, unmaiya?", "expected": "true", "acceptable": ["true"]}
+{"id": "ml30", "language": "ko", "script": "Hangul", "romanized_or_mixed": false, "text": "비누로 손을 씻으면 감염 예방에 도움이 된다.", "expected": "true", "acceptable": ["true"]}

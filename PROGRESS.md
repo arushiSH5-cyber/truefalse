@@ -53,16 +53,28 @@ Repo: https://github.com/arushiSH5-cyber/truefalse
 - **Pipeline**: a new `modality` stage; media warnings (possibly edited, possibly AI-generated, auto-transcribed, part failed to open, seen before with its earlier verdict); progress message "Looking at your media…" localized; Telegram photos/voice/audio/video/video notes/image-video-audio documents
 - **Tests**: 120 passing, including real ffmpeg on a generated video, a pHash robustness test, SSRF rejection cases, a redirect-to-metadata attack, article extraction, oEmbed, and long-audio chunk selection
 
-## Next: Phase 6, every language
+### Phase 6: Every language (2026-10-10)
+- **Script detection** (`language/scripts.py`): Unicode-based detection of 40+ writing systems (counting combining marks, so Indic text isn't undercounted), mixed-script detection, and romanization detection (e.g. Hindi or Tamil in Latin letters). It backs up the LLM's romanized/code-mixed flag.
+- **fastText LID** (`language/detect.py`, optional `lid` extra): NLLB/lid.176 labels mapped to ISO codes and passed to the extractor as a hint only
+- **Language switch** (`language/names.py`): ~60 languages recognized by English name, autonym, or names in other major languages ("Español", "inglés", "हिंदी", "العربية", "中文", "Kiswahili"). `/language` resets to auto-detect, and the acknowledgment uses the chosen language.
+- **Preferences** (`core/prefs.py`): Redis, keyed only by the user hash (reply language, voice replies, welcomed, digest opt-in)
+- **First-time welcome**, translated into the user's language (`respond/translate.py`, cached), before their first answer
+- **Voice out** (`respond/tts.py`): gTTS → OGG/Opus via ffmpeg. Voice in gets voice out; `/voice` turns it on for every answer; unsupported languages fall back to text silently.
+- **Per-language accuracy** (`language/accuracy.py`): measured macro-F1 per language (written by the eval harness), with a conservative default list. Lower-accuracy languages get a user-facing warning.
+- **Test sets** (`eval/datasets/`): `health_cures.jsonl` (38 items: fake cures, unsafe treatments, superstitions, true controls; 20+ flagged harmful) and `multilingual_claims.jsonl` (30 items, 15 languages, 10 scripts, romanized and code-mixed)
+- **Tests**: 182 passing. CI now installs ffmpeg so the video tests run there too.
+
+## Next: Phase 7, WhatsApp + PWA
 
 ## Deferred (planned in later phases)
-- Per-user state: first-time welcome in the detected language, language switching ("Español"), opt-in digest. These need a users table and come with Phase 3 migrations or Phase 9.
+- Opt-in weekly digest (Phase 9; the preference fields already exist)
 - Thumbs up/down, "Report a mistake", review queue (Phase 9)
 - Three-judge panel, calibration, disagreement detection, grounding check (Phase 4)
 - fastText lid-218 as a fast language pre-check (Phase 6)
 
 ## Blockers / notes
 - Voice/video/reels need `uv sync --extra media` (faster-whisper, yt-dlp) and have not been run against real downloads; yt-dlp site support changes often, so keep it updated. The SSRF check resolves DNS before httpx connects (a small DNS-rebinding window remains; a pinned-IP transport would close it).
+- The eval dataset labels were written by the authors from public-health sources; get a second reviewer before publishing results.
 - **Not yet run against real APIs.** Every external call is tested only against fakes and saved sample responses. The first live run needs `ANTHROPIC_API_KEY` + `TELEGRAM_BOT_TOKEN` (and ideally `GOOGLE_FACTCHECK_API_KEY` and a Brave `SEARCH_API_KEY`).
 - The real E5 model test (`-m ml`) has not been run: it needs `uv sync --extra ml` (PyTorch, ~2 GB). `MATCH_STRONG_THRESHOLD=0.88` is a starting guess; tune it in Phase 8 evaluation.
 - Docker and uv are not installed on the dev Mac, so `docker compose up` has not been run locally. CI covers lint, types and tests on Python 3.12.

@@ -12,7 +12,7 @@ class MediaToolError(Exception):
     pass
 
 
-async def _run(*args: str, timeout_s: float = FFMPEG_TIMEOUT_S) -> bytes:
+async def run_tool(*args: str, timeout_s: float = FFMPEG_TIMEOUT_S) -> bytes:
     proc = await asyncio.create_subprocess_exec(
         *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
     )
@@ -28,7 +28,7 @@ async def _run(*args: str, timeout_s: float = FFMPEG_TIMEOUT_S) -> bytes:
 
 
 async def probe_duration(path: Path) -> float | None:
-    out = await _run(
+    out = await run_tool(
         "ffprobe",
         "-v",
         "error",
@@ -46,7 +46,7 @@ async def probe_duration(path: Path) -> float | None:
 
 
 async def has_audio(path: Path) -> bool:
-    out = await _run(
+    out = await run_tool(
         "ffprobe",
         "-v",
         "error",
@@ -67,7 +67,7 @@ async def extract_audio(video: Path, out_dir: Path, max_seconds: float) -> Path 
     if not await has_audio(video):
         return None
     out = out_dir / f"{video.stem}.wav"
-    await _run(
+    await run_tool(
         "ffmpeg",
         "-nostdin",
         "-y",
@@ -93,7 +93,7 @@ async def extract_keyframes(video: Path, out_dir: Path, count: int = MAX_KEYFRAM
         t = duration * (i + 0.5) / count if duration else 0.0
         out = out_dir / f"{video.stem}_frame{i}.jpg"
         try:
-            await _run(
+            await run_tool(
                 "ffmpeg",
                 "-nostdin",
                 "-y",

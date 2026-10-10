@@ -128,6 +128,7 @@ class FakeSource:
 class FakeMessenger:
     def __init__(self, fail: bool = False) -> None:
         self.sent: list[tuple[ReplyTarget, str]] = []
+        self.voices: list[tuple[ReplyTarget, str]] = []
         self.fail = fail
 
     async def send_text(self, target: ReplyTarget, text: str) -> None:
@@ -137,6 +138,12 @@ class FakeMessenger:
 
     async def send_typing(self, target: ReplyTarget) -> None:
         pass
+
+    async def send_voice(self, target: ReplyTarget, ogg_path: str) -> None:
+        import os
+
+        assert os.path.exists(ogg_path)
+        self.voices.append((target, ogg_path))
 
 
 class FakeQueue:

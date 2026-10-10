@@ -52,6 +52,10 @@ class Settings(BaseSettings):
     max_media_seconds: int = Field(default=3600, gt=0)
     image_hash_db: bool = False  # remember perceptual hashes in Postgres ("seen before")
 
+    # Languages (Phase 6)
+    lid_model_path: str | None = None  # fastText lid218e.bin / lid.176.bin; needs `lid` extra
+    tts_enabled: bool = True  # voice replies via gTTS; needs `voice` extra + ffmpeg
+
     # Pipeline limits
     max_claims: int = Field(default=3, ge=1, le=10)
     research_max_tool_calls: int = Field(default=8, ge=0, le=30)

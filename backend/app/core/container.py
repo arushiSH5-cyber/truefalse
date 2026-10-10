@@ -1,6 +1,9 @@
 """Builds real dependencies from settings. Tests build fakes instead (tests/fakes.py)."""
 
 import importlib.util
+import tempfile
+from pathlib import Path
+from typing import TYPE_CHECKING
 
 import httpx
 
@@ -18,6 +21,10 @@ from app.research.sources.factcheck_api import GoogleFactCheckSource
 from app.research.sources.pubmed import PubMedSource
 from app.research.sources.semantic_scholar import SemanticScholarSource
 from app.research.sources.web_search import BraveWebSearchSource
+
+if TYPE_CHECKING:
+    from app.language.detect import LanguageDetector
+    from app.worker import Extras
 
 log = get_logger(__name__)
 
@@ -109,4 +116,32 @@ def build_deps(
         ),
         index=build_index(settings),
         media=build_media(settings, llm, http, fetcher),
+        lid=build_lid(settings),
     )
+
+
+def build_extras(settings: Settings, llm: LLMClient) -> "Extras":
+    from app.core.prefs import RedisPrefsStore
+    from app.respond.translate import Translator
+    from app.worker import Extras
+
+    tts = supports = None
+    if settings.tts_enabled and importlib.util.find_spec("gtts"):
+        from app.respond.tts import GTTSVoice
+
+        voice = GTTSVoice(Path(tempfile.gettempdir()))
+        tts, supports = voice, voice.supports
+    return Extras(
+        prefs=RedisPrefsStore(settings.redis_url),
+        translator=Translator(llm),
+        tts=tts,
+        tts_supports=supports,
+    )
+
+
+def build_lid(settings: Settings) -> "LanguageDetector | None":
+    if not settings.lid_model_path or not importlib.util.find_spec("fasttext"):
+        return None
+    from app.language.detect import FastTextDetector
+
+    return FastTextDetector(settings.lid_model_path)

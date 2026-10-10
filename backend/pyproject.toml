@@ -39,6 +39,15 @@ media = [
     "trafilatura>=1.12",
 ]
 
+# Fast language-ID pre-check; `uv sync --extra lid` + a fastText model file (LID_MODEL_PATH)
+lid = [
+    "fasttext-wheel>=0.9.2",
+]
+# Voice replies; `uv sync --extra voice` (+ ffmpeg)
+voice = [
+    "gTTS>=2.5",
+]
+
 [dependency-groups]
 dev = [
     "pytest>=8.3",

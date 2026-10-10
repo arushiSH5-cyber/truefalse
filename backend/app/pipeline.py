@@ -20,6 +20,10 @@ from app.core.models import (
     Verdict,
 )
 from app.core.trace import RunTrace, current_trace
+from app.language.accuracy import LOWER_ACCURACY_WARNING, is_lower_accuracy
+from app.language.detect import LanguageDetector
+from app.language.names import english_name
+from app.language.scripts import is_mixed_script, looks_romanized
 from app.matching.factcheck_index import FactCheckIndex
 from app.modality.media import temp_workdir
 from app.modality.process import (
@@ -30,7 +34,7 @@ from app.modality.process import (
 )
 from app.research.agent import research
 from app.research.sources.base import Source
-from app.respond.compose import compose, render_text
+from app.respond.compose import compose, render_text, spoken_text
 from app.safety import topic_rules
 from app.safety.grounding_check import ground
 from app.verify.judges import judge as run_judge
@@ -60,6 +64,7 @@ class Deps:
     config: PipelineConfig = field(default_factory=PipelineConfig)
     index: FactCheckIndex | None = None
     media: MediaProviders | None = None
+    lid: LanguageDetector | None = None
 
 
 def seen_before_warnings(processed: ProcessedContent) -> list[str]:
@@ -124,17 +129,34 @@ async def run_check(
     deps: Deps,
     trace: RunTrace | None = None,
     progress: ProgressFn | None = None,
+    reply_language: str | None = None,
 ) -> CheckReport:
+    """`reply_language` overrides the detected language (user's language-switch preference)."""
     trace = trace or RunTrace()
     token = current_trace.set(trace)
     try:
-        return await _run(submission, deps, trace, progress)
+        return await _run(submission, deps, trace, progress, reply_language)
     finally:
         current_trace.reset(token)
 
 
+async def _language_hint(deps: Deps, text: str) -> str | None:
+    if deps.lid is None or not text.strip():
+        return None
+    try:
+        guess = await deps.lid.detect(text)
+    except Exception as exc:
+        log.warning("lid_failed", error=str(exc))
+        return None
+    return f"{guess.language} (confidence {guess.confidence:.2f})" if guess else None
+
+
 async def _run(
-    submission: Submission, deps: Deps, trace: RunTrace, progress: ProgressFn | None
+    submission: Submission,
+    deps: Deps,
+    trace: RunTrace,
+    progress: ProgressFn | None,
+    reply_language: str | None,
 ) -> CheckReport:
     cfg = deps.config
     with trace.timed("modality"):
@@ -143,7 +165,17 @@ async def _run(
 
     with trace.timed("extract"):
         if text.strip():
-            extraction = await extract_claims(deps.llm, text, max_claims=cfg.max_claims)
+            extraction = await extract_claims(
+                deps.llm,
+                text,
+                max_claims=cfg.max_claims,
+                language_hint=await _language_hint(deps, text),
+            )
+            own_text = submission_text(submission)  # not our English media labels
+            if not extraction.romanized_or_mixed and (
+                looks_romanized(extraction.language, own_text) or is_mixed_script(own_text)
+            ):
+                extraction = extraction.model_copy(update={"romanized_or_mixed": True})
         else:  # e.g. every media part failed to open
             extraction = Extraction(
                 language=(submission.language_hint or "en").split("-")[0],
@@ -195,6 +227,9 @@ async def _run(
         extraction, judgements, by_id, sources_disagree=any(d.judges_disagree for d in decisions)
     )
     warnings = processed.warnings + seen_before_warnings(processed) + warnings
+    language = reply_language or extraction.language
+    if is_lower_accuracy(extraction.language):
+        warnings.append(LOWER_ACCURACY_WARNING.format(language=english_name(extraction.language)))
     note = topic_rules.safety_note(extraction.claims, judgements)
     if deps.media and deps.media.hashes:
         for phash in processed.image_hashes:
@@ -207,8 +242,8 @@ async def _run(
     with trace.timed("compose"):
         reply = await compose(
             deps.llm,
-            language=extraction.language,
-            language_name=extraction.language_name,
+            language=language,
+            language_name=(english_name(language) if reply_language else extraction.language_name),
             verdict=overall,
             confidence=confidence,
             explanation_en=explanation,
@@ -227,4 +262,6 @@ async def _run(
         evidence=evidence,
         warnings=warnings,
         reply_text=render_text(reply, overall, sources),
+        reply_language=language,
+        spoken_text=spoken_text(reply),
     )

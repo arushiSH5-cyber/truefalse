@@ -99,3 +99,11 @@ def render_text(reply: ComposedReply, verdict: Verdict, sources: Sequence[Eviden
             lines.append(f"{i}. {s.title[:90]}{who}\n{s.url}")
     text = "\n".join(lines).strip()
     return text if len(text) <= TELEGRAM_LIMIT else text[: TELEGRAM_LIMIT - 1] + "…"
+
+
+def spoken_text(reply: ComposedReply) -> str:
+    """What a voice reply says: verdict, explanation, safety note. Links are text-only."""
+    parts = [f"{reply.verdict_label}.", reply.explanation]
+    if reply.safety_note:
+        parts.append(reply.safety_note)
+    return " ".join(parts)
