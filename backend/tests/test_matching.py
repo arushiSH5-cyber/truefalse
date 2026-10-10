@@ -114,8 +114,7 @@ async def test_match_stage_uses_threshold(index, spanish_health_extraction) -> N
 
 async def test_pipeline_seeds_research_with_matches(index, submission, spanish_health_extraction):
     llm = FakeLLM().queue("extract", spanish_health_extraction)
-    llm.queue(
-        "verify",
+    llm.queue_panel(
         JudgePanelOutput(
             judgements=[
                 ClaimJudgement(

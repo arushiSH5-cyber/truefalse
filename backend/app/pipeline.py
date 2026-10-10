@@ -9,6 +9,7 @@ from app.core.logging import get_logger
 from app.core.models import (
     CheckReport,
     Claim,
+    ClaimDecision,
     ClaimJudgement,
     Confidence,
     Evidence,
@@ -24,6 +25,7 @@ from app.research.agent import research
 from app.research.sources.base import Source
 from app.respond.compose import compose, render_text
 from app.safety import topic_rules
+from app.safety.grounding_check import ground
 from app.verify.judges import judge as run_judge
 from app.verify.judges import overall_verdict
 
@@ -112,6 +114,7 @@ async def _run(submission: Submission, deps: Deps, trace: RunTrace) -> CheckRepo
 
     evidence: list[Evidence] = []
     judgements: list[ClaimJudgement] = []
+    decisions: list[ClaimDecision] = []
     if extraction.claims:
         with trace.timed("match"):
             seed, n_matched = await match_factchecks(deps.index, extraction.claims, cfg)
@@ -132,8 +135,12 @@ async def _run(submission: Submission, deps: Deps, trace: RunTrace) -> CheckRepo
                 )
             except Exception as exc:  # no evidence -> every claim ends Unverified
                 log.warning("research_failed", error=str(exc))
+        by_id = {e.id: e for e in evidence}
         with trace.timed("verify"):
-            judgements = await run_judge(deps.llm, extraction.claims, evidence)
+            decisions = await run_judge(deps.llm, extraction.claims, evidence)
+        with trace.timed("ground"):
+            decisions = await ground(deps.llm, decisions, by_id)
+        judgements = [d.judgement for d in decisions]
 
     by_id = {e.id: e for e in evidence}
     if judgements:
@@ -142,7 +149,9 @@ async def _run(submission: Submission, deps: Deps, trace: RunTrace) -> CheckRepo
     else:
         overall, confidence, explanation = Verdict.UNVERIFIED, Confidence.LOW, NO_CLAIM_EXPLANATION
 
-    warnings = topic_rules.warnings(extraction, judgements, by_id)
+    warnings = topic_rules.warnings(
+        extraction, judgements, by_id, sources_disagree=any(d.judges_disagree for d in decisions)
+    )
     note = topic_rules.safety_note(extraction.claims, judgements)
     sources = _cited_sources(judgements, by_id)
 
@@ -163,6 +172,7 @@ async def _run(submission: Submission, deps: Deps, trace: RunTrace) -> CheckRepo
         language=extraction.language,
         claims=extraction.claims,
         judgements=judgements,
+        decisions=decisions,
         overall=overall,
         overall_confidence=confidence,
         evidence=evidence,

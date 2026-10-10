@@ -51,6 +51,10 @@ async def process(
         confidence=report.overall_confidence if report else None,
         n_claims=len(report.claims) if report else 0,
         n_evidence=len(report.evidence) if report else 0,
+        agreement=[d.agreement for d in report.decisions] if report else [],
+        probability=[d.probability for d in report.decisions] if report else [],
+        grounded_ratio=[d.grounded_ratio for d in report.decisions] if report else [],
+        judges_disagree=any(d.judges_disagree for d in report.decisions) if report else False,
         stages={k: v.model_dump() for k, v in trace.stages.items()},
         cost_usd=trace.cost_usd(*prices),
     )

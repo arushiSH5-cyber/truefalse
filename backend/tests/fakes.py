@@ -20,9 +20,44 @@ class FakeLLM:
         self.outputs: dict[str, deque[BaseModel | Exception]] = defaultdict(deque)
         self.tool_script: list[tuple[str, dict[str, Any]]] = []
         self.calls: list[dict[str, Any]] = []
+        self.auto_ground = True  # grounding check marks every sentence supported unless queued
+
+    @staticmethod
+    def _all_supported(user: str, output: type[T]) -> T:
+        import json
+
+        items = json.loads(user)
+        return output.model_validate(
+            {
+                "explanations": [
+                    {
+                        "claim_index": it["claim_index"],
+                        "sentences": [
+                            {
+                                "index": int(i),
+                                "supported": True,
+                                "evidence_ids": [e["id"] for e in it["evidence"]][:1],
+                            }
+                            for i in it["sentences"]
+                        ],
+                    }
+                    for it in items
+                ]
+            }
+        )
 
     def queue(self, stage: str, value: BaseModel | Exception) -> "FakeLLM":
         self.outputs[stage].append(value)
+        return self
+
+    def queue_panel(self, *values: BaseModel | Exception) -> "FakeLLM":
+        """Queue one output per panel judge (one value = all judges agree)."""
+        from app.verify.judges import PANEL
+
+        for spec, value in zip(
+            PANEL, values * len(PANEL) if len(values) == 1 else values, strict=False
+        ):
+            self.queue(f"verify.{spec.name}", value)
         return self
 
     async def structured(
@@ -37,6 +72,8 @@ class FakeLLM:
     ) -> T:
         self.calls.append({"stage": stage, "system": system, "user": user})
         record_tokens(stage, 100, 50)
+        if stage == "ground" and not self.outputs[stage] and self.auto_ground:
+            return self._all_supported(user, output)
         if not self.outputs[stage]:
             raise LLMError(f"FakeLLM: nothing queued for {stage}")
         value = self.outputs[stage].popleft()

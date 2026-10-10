@@ -50,9 +50,12 @@ def warnings(
     judgements: Sequence[ClaimJudgement],
     evidence: dict[str, Evidence],
     *,
+    sources_disagree: bool = False,
     now: datetime | None = None,
 ) -> list[str]:
     out: list[str] = []
+    if sources_disagree:
+        out.append("Trusted sources or our reviewers disagree about this, so treat it with care.")
     if extraction.looks_like_satire_or_opinion:
         out.append("This looks like it may be satire, a joke, or an opinion, not a news report.")
     if extraction.romanized_or_mixed:

@@ -29,8 +29,7 @@ async def test_false_health_claim_full_flow(
 ) -> None:
     llm = FakeLLM()
     llm.queue("extract", spanish_health_extraction)
-    llm.queue(
-        "verify",
+    llm.queue_panel(
         JudgePanelOutput(
             judgements=[
                 ClaimJudgement(
@@ -66,7 +65,17 @@ async def test_false_health_claim_full_flow(
     assert "Target language: es (Spanish)" in compose_call["user"]
     assert "not doctors" in compose_call["user"]  # health note passed for translation
     assert "could harm" in compose_call["user"]  # danger note for harmful false claim
-    assert set(trace.stages) == {"extract", "match", "research", "verify", "compose"}
+    assert set(trace.stages) == {
+        "extract",
+        "match",
+        "research",
+        "verify",
+        "verify.balanced",
+        "verify.skeptic",
+        "verify.context",
+        "ground",
+        "compose",
+    }
 
 
 async def test_no_evidence_means_unverified_without_judge(submission, spanish_health_extraction):
@@ -75,7 +84,7 @@ async def test_no_evidence_means_unverified_without_judge(submission, spanish_he
     report = await run_check(submission, Deps(llm, [FakeSource(SourceKind.WEB, [])]))
     assert report.overall is Verdict.UNVERIFIED
     assert report.overall_confidence is Confidence.LOW
-    assert not any(c["stage"] == "verify" for c in llm.calls)
+    assert not any(c["stage"].startswith("verify") for c in llm.calls)
     assert report.reply_text.startswith("⚪ UNVERIFIED")
 
 
@@ -83,8 +92,7 @@ async def test_judge_citing_unknown_evidence_is_downgraded(
     submission, spanish_health_extraction, factcheck_draft
 ):
     llm = FakeLLM().queue("extract", spanish_health_extraction)
-    llm.queue(
-        "verify",
+    llm.queue_panel(
         JudgePanelOutput(
             judgements=[
                 ClaimJudgement(
@@ -138,7 +146,7 @@ async def test_failing_source_does_not_crash(submission, spanish_health_extracti
 
 async def test_tool_call_cap(submission, spanish_health_extraction, factcheck_draft):
     llm = FakeLLM().queue("extract", spanish_health_extraction)
-    llm.queue("verify", JudgePanelOutput(judgements=[]))
+    llm.queue_panel(JudgePanelOutput(judgements=[]))
     llm.queue("compose", _composed_es())
     llm.tool_script = [
         ("search_factchecks", {"query": f"q{i}", "language": None}) for i in range(10)

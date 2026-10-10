@@ -121,6 +121,32 @@ class JudgePanelOutput(BaseModel):
     judgements: list[ClaimJudgement]
 
 
+class ClaimDecision(BaseModel):
+    """Final decision for one claim, with the panel's votes kept for transparency/eval."""
+
+    judgement: ClaimJudgement
+    votes: list[Verdict]
+    agreement: float
+    probability: float  # calibrated probability that the verdict is right
+    judges_disagree: bool
+    grounded_ratio: float = 1.0  # share of explanation sentences kept by the grounding check
+
+
+class GroundedSentence(BaseModel):
+    index: int = Field(description="Index of the sentence in the input list")
+    supported: bool = Field(description="True only if the cited evidence states this directly")
+    evidence_ids: list[str]
+
+
+class GroundedExplanation(BaseModel):
+    claim_index: int
+    sentences: list[GroundedSentence]
+
+
+class GroundingOutput(BaseModel):
+    explanations: list[GroundedExplanation]
+
+
 class ComposedReply(BaseModel):
     """Translatable text produced by the LLM; links are added by code, never by the model."""
 
@@ -137,6 +163,7 @@ class CheckReport(BaseModel):
     language: str
     claims: list[Claim]
     judgements: list[ClaimJudgement]
+    decisions: list[ClaimDecision] = Field(default_factory=list)
     overall: Verdict
     overall_confidence: Confidence
     evidence: list[Evidence]

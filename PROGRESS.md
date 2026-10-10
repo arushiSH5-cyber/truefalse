@@ -33,7 +33,16 @@ Repo: https://github.com/arushiSH5-cyber/truefalse
 - **Ingestion**: `scripts/ingest_factchecks.py --file <DataFeed json or URL>` / `--api queries.txt --languages en,es,hi`
 - **Tests**: cross-language matching (Spanish, Hindi, Chinese, Swahili code-mix → English fact-checks) with a deterministic concept embedder; a Postgres integration test that runs in CI against pgvector; an optional `ml`-marked test with the real E5 model
 
-## Next: Phase 4, trust layer
+### Phase 4: Trust layer (2026-10-10)
+- **Judge panel** (`verify/judges.py`): 3 independent judges (balanced `judge.v1`, skeptic `judge_skeptic.v1`, context `judge_context.v1`) run concurrently. They differ by prompt and effort level, because Opus 5.5 rejects sampling temperature. The panel survives one judge failing; fewer than 2 valid judges means Unverified.
+- **Decision rules**: the core rule is applied to every vote and again to the final decision. TRUE vs FALSE/MISLEADING disagreement means Unverified ("sources disagree"); a FALSE+MISLEADING split resolves to the milder MISLEADING; a cited fact-check that contradicts the verdict means Unverified.
+- **Calibration** (`verify/calibration.py`): a logistic model over agreement, best source tier, source count, fact-check consensus and judge confidence. Probability < 0.5 means Unverified; ≥ 0.65 is Medium, ≥ 0.85 is High. `Calibrator.fit` and `save` are ready for Phase 8; `expected_calibration_error` is included.
+- **Rating normalization** (`verify/ratings.py`): fact-checker ratings in ~15 languages (False/Falso/Faux/झूठ/كاذب/虚假/Hoaks…) map to verdicts, and conflicting ratings are detected
+- **Grounding check** (`safety/grounding_check.py`): a deterministic invented-number filter plus an LLM sentence-by-sentence support check (by index). Unsupported sentences are dropped; if nothing survives or the check fails, a template built only from evidence metadata is used. Multi-script sentence splitting covers `。 । ؟`.
+- **Warnings**: "sources disagree" is added. Metrics now log agreement, probability and grounded ratio per claim.
+- **Tests**: 97 passing (ratings in many languages, calibration fit/ECE, panel voting edge cases, judge failure, grounding drop/fallback)
+
+## Next: Phase 5, multimodal
 
 ## Deferred (planned in later phases)
 - Per-user state: first-time welcome in the detected language, language switching ("Español"), opt-in digest. These need a users table and come with Phase 3 migrations or Phase 9.
