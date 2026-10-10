@@ -20,16 +20,29 @@ class Settings(BaseSettings):
     # LLM
     anthropic_api_key: SecretStr | None = None
     anthropic_model: str = "claude-opus-5-5"
+    # Server-side refusal fallback (reroutes a declined request to another model in-call)
+    llm_use_fallbacks: bool = True
+    # USD per million tokens, for cost metrics only
+    llm_input_price_per_mtok: float = 4.0
+    llm_output_price_per_mtok: float = 20.0
 
     # Messaging platforms
     telegram_bot_token: SecretStr | None = None
+    telegram_webhook_secret: SecretStr | None = None
     whatsapp_token: SecretStr | None = None
     whatsapp_phone_id: str | None = None
 
     # Research sources
     google_factcheck_api_key: SecretStr | None = None
     semantic_scholar_api_key: SecretStr | None = None
+    ncbi_api_key: SecretStr | None = None
+    search_provider: Literal["brave", "none"] = "brave"
     search_api_key: SecretStr | None = None
+
+    # Pipeline limits
+    max_claims: int = Field(default=3, ge=1, le=10)
+    research_max_tool_calls: int = Field(default=8, ge=0, le=30)
+    research_time_budget_s: float = Field(default=60.0, gt=0)
 
     # Privacy: salt used when hashing user identifiers (phone numbers, chat ids)
     user_hash_salt: SecretStr = SecretStr("change-me")

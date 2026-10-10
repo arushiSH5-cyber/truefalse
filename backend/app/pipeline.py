@@ -1,0 +1,138 @@
+"""End-to-end check: extract -> research -> verify -> safety -> respond."""
+
+from collections.abc import Sequence
+from dataclasses import dataclass, field
+
+from app.claims.extract import extract_claims
+from app.core.llm import LLMClient
+from app.core.logging import get_logger
+from app.core.models import (
+    CheckReport,
+    ClaimJudgement,
+    Confidence,
+    Evidence,
+    Extraction,
+    PartKind,
+    Submission,
+    Verdict,
+)
+from app.core.trace import RunTrace, current_trace
+from app.research.agent import research
+from app.research.sources.base import Source
+from app.respond.compose import compose, render_text
+from app.safety import topic_rules
+from app.verify.judges import judge as run_judge
+from app.verify.judges import overall_verdict
+
+log = get_logger(__name__)
+
+NO_CLAIM_EXPLANATION = (
+    "I did not find a factual claim to check in this message. Send me a message, forward, "
+    "or rumor that states something as a fact, and I will check it."
+)
+
+
+@dataclass
+class PipelineConfig:
+    max_claims: int = 3
+    research_max_tool_calls: int = 8
+    research_time_budget_s: float = 60.0
+
+
+@dataclass
+class Deps:
+    llm: LLMClient
+    sources: Sequence[Source]
+    config: PipelineConfig = field(default_factory=PipelineConfig)
+
+
+def submission_text(submission: Submission) -> str:
+    return "\n".join(p.text for p in submission.parts if p.kind is PartKind.TEXT and p.text)
+
+
+def _combined_explanation(extraction: Extraction, judgements: Sequence[ClaimJudgement]) -> str:
+    if len(judgements) == 1:
+        return judgements[0].explanation
+    return "\n".join(
+        f"- Claim: {extraction.claims[j.claim_index].english} -> {j.verdict.value}: {j.explanation}"
+        for j in judgements
+    )
+
+
+def _cited_sources(
+    judgements: Sequence[ClaimJudgement], evidence: dict[str, Evidence]
+) -> list[Evidence]:
+    ids = dict.fromkeys(e for j in judgements for e in j.cited_evidence_ids)
+    return sorted((evidence[i] for i in ids if i in evidence), key=lambda e: e.tier)
+
+
+async def run_check(
+    submission: Submission, deps: Deps, trace: RunTrace | None = None
+) -> CheckReport:
+    trace = trace or RunTrace()
+    token = current_trace.set(trace)
+    try:
+        return await _run(submission, deps, trace)
+    finally:
+        current_trace.reset(token)
+
+
+async def _run(submission: Submission, deps: Deps, trace: RunTrace) -> CheckReport:
+    cfg = deps.config
+    text = submission_text(submission)
+
+    with trace.timed("extract"):
+        extraction = await extract_claims(deps.llm, text, max_claims=cfg.max_claims)
+
+    evidence: list[Evidence] = []
+    judgements: list[ClaimJudgement] = []
+    if extraction.claims:
+        with trace.timed("research"):
+            try:
+                evidence = await research(
+                    deps.llm,
+                    deps.sources,
+                    extraction.claims,
+                    language=extraction.language,
+                    max_tool_calls=cfg.research_max_tool_calls,
+                    time_budget_s=cfg.research_time_budget_s,
+                )
+            except Exception as exc:  # no evidence -> every claim ends Unverified
+                log.warning("research_failed", error=str(exc))
+        with trace.timed("verify"):
+            judgements = await run_judge(deps.llm, extraction.claims, evidence)
+
+    by_id = {e.id: e for e in evidence}
+    if judgements:
+        overall, confidence = overall_verdict(judgements)
+        explanation = _combined_explanation(extraction, judgements)
+    else:
+        overall, confidence, explanation = Verdict.UNVERIFIED, Confidence.LOW, NO_CLAIM_EXPLANATION
+
+    warnings = topic_rules.warnings(extraction, judgements, by_id)
+    note = topic_rules.safety_note(extraction.claims, judgements)
+    sources = _cited_sources(judgements, by_id)
+
+    with trace.timed("compose"):
+        reply = await compose(
+            deps.llm,
+            language=extraction.language,
+            language_name=extraction.language_name,
+            verdict=overall,
+            confidence=confidence,
+            explanation_en=explanation,
+            warnings_en=warnings,
+            safety_note_en=note,
+        )
+
+    return CheckReport(
+        submission_id=submission.id,
+        language=extraction.language,
+        claims=extraction.claims,
+        judgements=judgements,
+        overall=overall,
+        overall_confidence=confidence,
+        evidence=evidence,
+        warnings=warnings,
+        reply_text=render_text(reply, overall, sources),
+    )

@@ -18,7 +18,19 @@ is *Unverified*.
 
 ## Status
 
-Phase 1 (skeleton) is done. See [PROGRESS.md](PROGRESS.md) for the phase plan.
+Phases 1–2 are done: the text checker on Telegram works end to end. See [PROGRESS.md](PROGRESS.md)
+for the phase plan and [CONTRIBUTING.md](CONTRIBUTING.md) for how to add providers (voice, OCR, …).
+
+## How a check works
+
+```
+message ─► detect language + extract claims ─► research agent (tool calls, capped)
+        ─► judge (must cite evidence ids) ─► core rule + safety notes
+        ─► reply in the user's language, with source links added by code
+```
+
+Research tools: Google Fact Check (ClaimReview), Semantic Scholar, PubMed, and web search (Brave).
+Sources are tiered: 1 = peer-reviewed and official bodies, 2 = news wires and fact-checkers, 3 = other.
 
 ## Layout
 
@@ -64,6 +76,22 @@ uv run pytest
 uv run ruff check . && uv run ruff format --check .
 uv run mypy app
 ```
+
+## Try the Telegram bot locally
+
+1. Create a bot with [@BotFather](https://t.me/BotFather) and copy the token.
+2. Put `ANTHROPIC_API_KEY` and `TELEGRAM_BOT_TOKEN` in `.env`. The other source keys are optional; Semantic Scholar and PubMed work without a key.
+3. Run the long-polling dev runner. It needs no webhook, Redis or worker:
+
+   ```bash
+   cd backend
+   uv run python -m scripts.telegram_poll
+   ```
+
+4. Message your bot.
+
+In production, use the webhook instead: run `docker compose up`, expose `/webhooks/telegram` over
+HTTPS, and call Telegram's `setWebhook` with `secret_token=$TELEGRAM_WEBHOOK_SECRET`.
 
 ## Engineering rules
 

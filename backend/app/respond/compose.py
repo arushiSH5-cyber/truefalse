@@ -1,0 +1,101 @@
+"""Compose the user-facing reply in the user's language.
+
+The LLM only writes translatable text. Verdict emoji, source titles and URLs are inserted by
+code, so links can never be invented.
+"""
+
+import json
+from collections.abc import Sequence
+
+from app.core import prompts
+from app.core.llm import LLMClient
+from app.core.logging import get_logger
+from app.core.models import ComposedReply, Confidence, Evidence, Verdict
+
+log = get_logger(__name__)
+
+EMOJI = {
+    Verdict.TRUE: "🟢",
+    Verdict.MISLEADING: "🟠",
+    Verdict.FALSE: "🔴",
+    Verdict.UNVERIFIED: "⚪",
+}
+EN_LABEL = {
+    Verdict.TRUE: "True",
+    Verdict.MISLEADING: "Misleading",
+    Verdict.FALSE: "False",
+    Verdict.UNVERIFIED: "Unverified",
+}
+MAX_SOURCES = 4
+TELEGRAM_LIMIT = 4000
+
+
+def english_reply(
+    verdict: Verdict,
+    confidence: Confidence,
+    explanation: str,
+    warnings: Sequence[str],
+    safety_note: str | None,
+) -> ComposedReply:
+    return ComposedReply(
+        verdict_label=EN_LABEL[verdict],
+        explanation=explanation,
+        confidence_label=f"Confidence: {confidence.value.capitalize()}",
+        warnings=list(warnings),
+        safety_note=safety_note,
+        sources_heading="Sources",
+    )
+
+
+async def compose(
+    llm: LLMClient,
+    *,
+    language: str,
+    language_name: str,
+    verdict: Verdict,
+    confidence: Confidence,
+    explanation_en: str,
+    warnings_en: Sequence[str],
+    safety_note_en: str | None,
+) -> ComposedReply:
+    fallback = english_reply(verdict, confidence, explanation_en, warnings_en, safety_note_en)
+    payload = {
+        "verdict": EN_LABEL[verdict],
+        "confidence": confidence.value,
+        "explanation": explanation_en,
+        "warnings": list(warnings_en),
+        "safety_note": safety_note_en,
+    }
+    try:
+        return await llm.structured(
+            stage="compose",
+            system=prompts.render("compose.v1"),
+            user=prompts.render(
+                "compose_task.v1",
+                language=language,
+                language_name=language_name,
+                payload=json.dumps(payload, ensure_ascii=False, indent=1),
+            ),
+            output=ComposedReply,
+            effort="low",
+            max_tokens=2000,
+        )
+    except Exception as exc:  # graceful fallback: answer in English rather than not at all
+        log.warning("compose_failed", error=str(exc))
+        return fallback
+
+
+def render_text(reply: ComposedReply, verdict: Verdict, sources: Sequence[Evidence]) -> str:
+    lines = [f"{EMOJI[verdict]} {reply.verdict_label.upper()}", "", reply.explanation, ""]
+    lines.append(reply.confidence_label)
+    for w in reply.warnings:
+        lines.append(f"⚠️ {w}")
+    if reply.safety_note:
+        lines += ["", f"🩺 {reply.safety_note}"]
+    if sources:
+        lines += ["", f"{reply.sources_heading}:"]
+        for i, s in enumerate(sources[:MAX_SOURCES], 1):
+            who = f" ({s.publisher})" if s.publisher else ""
+            lines.append(f"{i}. {s.title[:90]}{who}\n{s.url}")
+    text = "\n".join(lines).strip()
+    return text if len(text) <= TELEGRAM_LIMIT else text[: TELEGRAM_LIMIT - 1] + "…"

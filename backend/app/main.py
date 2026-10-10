@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, Response
 
 from app import __version__
-from app.api import health
+from app.api import health, telegram
 from app.core import db
 from app.core.config import get_settings
 from app.core.logging import configure_logging, get_logger, new_trace_id, trace_id_var
@@ -51,6 +51,7 @@ def create_app() -> FastAPI:
         return response
 
     app.include_router(health.router)
+    app.include_router(telegram.router)
     return app
 
 
