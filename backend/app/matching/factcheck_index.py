@@ -11,7 +11,7 @@ import numpy as np
 from pydantic import BaseModel
 from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert
-from sqlalchemy.ext.asyncio import AsyncEngine
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from app.core.db_models import FactCheck
 from app.core.models import EvidenceDraft, SourceKind
@@ -136,11 +136,11 @@ class PgFactCheckIndex:
         pool = max(k * 4, 20)
         by_id: dict[int, tuple[FactCheckRecord, float, float]] = {}
         dense_rankings: list[list[int]] = []
-        async with self._engine.connect() as conn:
+        async with AsyncSession(self._engine) as session:
             for vec in q:
                 distance = FactCheck.embedding.cosine_distance(vec.tolist())
                 rows = (
-                    await conn.execute(
+                    await session.execute(
                         select(FactCheck, (1 - distance).label("cos"))
                         .order_by(distance)
                         .limit(pool)
@@ -152,12 +152,12 @@ class PgFactCheckIndex:
                     by_id[fc.id] = (_record(fc), max(cos, prev[1] if prev else -1.0), 0.0)
 
             sparse = (
-                await conn.execute(SPARSE_SQL, {"q": _any_term_query(queries), "n": pool})
+                await session.execute(SPARSE_SQL, {"q": _any_term_query(queries), "n": pool})
             ).all()
             missing = [i for i, _ in sparse if i not in by_id]
             if missing:
                 for fc in (
-                    await conn.execute(select(FactCheck).where(FactCheck.id.in_(missing)))
+                    await session.execute(select(FactCheck).where(FactCheck.id.in_(missing)))
                 ).scalars():
                     by_id[fc.id] = (_record(fc), -1.0, 0.0)
         for i, r in sparse:
