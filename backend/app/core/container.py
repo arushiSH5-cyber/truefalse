@@ -3,8 +3,10 @@
 import httpx
 
 from app.core.config import Settings
+from app.core.db import get_engine
 from app.core.llm import AnthropicLLM
 from app.core.logging import get_logger
+from app.matching.factcheck_index import FactCheckIndex, PgFactCheckIndex
 from app.pipeline import Deps, PipelineConfig
 from app.research.sources.base import Source
 from app.research.sources.factcheck_api import GoogleFactCheckSource
@@ -45,6 +47,16 @@ def build_sources(settings: Settings, http: httpx.AsyncClient) -> list[Source]:
     return sources
 
 
+def build_index(settings: Settings) -> FactCheckIndex | None:
+    if not settings.factcheck_index_enabled:
+        return None
+    from app.matching.embeddings import SentenceTransformerEmbedder
+
+    return PgFactCheckIndex(
+        get_engine(settings.database_url), SentenceTransformerEmbedder(settings.embedding_model)
+    )
+
+
 def build_deps(settings: Settings, http: httpx.AsyncClient) -> Deps:
     api_key = _secret(settings.anthropic_api_key)
     if not api_key:
@@ -62,5 +74,7 @@ def build_deps(settings: Settings, http: httpx.AsyncClient) -> Deps:
             max_claims=settings.max_claims,
             research_max_tool_calls=settings.research_max_tool_calls,
             research_time_budget_s=settings.research_time_budget_s,
+            match_strong_threshold=settings.match_strong_threshold,
         ),
+        index=build_index(settings),
     )

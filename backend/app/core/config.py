@@ -39,6 +39,12 @@ class Settings(BaseSettings):
     search_provider: Literal["brave", "none"] = "brave"
     search_api_key: SecretStr | None = None
 
+    # Fact-check index (Phase 3)
+    factcheck_index_enabled: bool = False
+    embedding_model: str = "intfloat/multilingual-e5-base"
+    # Cosine similarity (E5, normalized) above which an indexed fact-check counts as a match
+    match_strong_threshold: float = Field(default=0.88, ge=0, le=1)
+
     # Pipeline limits
     max_claims: int = Field(default=3, ge=1, le=10)
     research_max_tool_calls: int = Field(default=8, ge=0, le=30)

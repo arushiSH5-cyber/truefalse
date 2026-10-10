@@ -66,7 +66,7 @@ async def test_false_health_claim_full_flow(
     assert "Target language: es (Spanish)" in compose_call["user"]
     assert "not doctors" in compose_call["user"]  # health note passed for translation
     assert "could harm" in compose_call["user"]  # danger note for harmful false claim
-    assert set(trace.stages) == {"extract", "research", "verify", "compose"}
+    assert set(trace.stages) == {"extract", "match", "research", "verify", "compose"}
 
 
 async def test_no_evidence_means_unverified_without_judge(submission, spanish_health_extraction):

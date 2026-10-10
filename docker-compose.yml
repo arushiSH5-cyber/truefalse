@@ -19,7 +19,10 @@ services:
       retries: 5
 
   worker:
-    build: ./backend
+    build:
+      context: ./backend
+      args:
+        EXTRAS: ${WORKER_EXTRAS:-}
     command: ["arq", "app.worker.WorkerSettings"]
     env_file: .env
     environment:

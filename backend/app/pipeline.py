@@ -8,15 +8,18 @@ from app.core.llm import LLMClient
 from app.core.logging import get_logger
 from app.core.models import (
     CheckReport,
+    Claim,
     ClaimJudgement,
     Confidence,
     Evidence,
+    EvidenceDraft,
     Extraction,
     PartKind,
     Submission,
     Verdict,
 )
 from app.core.trace import RunTrace, current_trace
+from app.matching.factcheck_index import FactCheckIndex
 from app.research.agent import research
 from app.research.sources.base import Source
 from app.respond.compose import compose, render_text
@@ -37,6 +40,8 @@ class PipelineConfig:
     max_claims: int = 3
     research_max_tool_calls: int = 8
     research_time_budget_s: float = 60.0
+    match_strong_threshold: float = 0.88
+    match_k: int = 3
 
 
 @dataclass
@@ -44,6 +49,27 @@ class Deps:
     llm: LLMClient
     sources: Sequence[Source]
     config: PipelineConfig = field(default_factory=PipelineConfig)
+    index: FactCheckIndex | None = None
+
+
+async def match_factchecks(
+    index: FactCheckIndex | None, claims: Sequence[Claim], cfg: PipelineConfig
+) -> tuple[list[EvidenceDraft], int]:
+    """Look claims up in the fact-check index. Returns (evidence, claims with a strong match)."""
+    if index is None:
+        return [], 0
+    drafts: list[EvidenceDraft] = []
+    matched = 0
+    for claim in claims:
+        try:
+            hits = await index.search([claim.original, claim.english], k=cfg.match_k)
+        except Exception as exc:
+            log.warning("match_failed", error=str(exc))
+            continue
+        strong = [h for h in hits if h.cosine >= cfg.match_strong_threshold]
+        matched += bool(strong)
+        drafts += [h.to_evidence() for h in strong]
+    return drafts, matched
 
 
 def submission_text(submission: Submission) -> str:
@@ -87,6 +113,12 @@ async def _run(submission: Submission, deps: Deps, trace: RunTrace) -> CheckRepo
     evidence: list[Evidence] = []
     judgements: list[ClaimJudgement] = []
     if extraction.claims:
+        with trace.timed("match"):
+            seed, n_matched = await match_factchecks(deps.index, extraction.claims, cfg)
+        # Every claim already has a published fact-check: only a short confirmation search.
+        budget = cfg.research_max_tool_calls
+        if seed and n_matched == len(extraction.claims):
+            budget = min(budget, 2)
         with trace.timed("research"):
             try:
                 evidence = await research(
@@ -94,8 +126,9 @@ async def _run(submission: Submission, deps: Deps, trace: RunTrace) -> CheckRepo
                     deps.sources,
                     extraction.claims,
                     language=extraction.language,
-                    max_tool_calls=cfg.research_max_tool_calls,
+                    max_tool_calls=budget,
                     time_budget_s=cfg.research_time_budget_s,
+                    seed=seed,
                 )
             except Exception as exc:  # no evidence -> every claim ends Unverified
                 log.warning("research_failed", error=str(exc))

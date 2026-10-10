@@ -64,6 +64,21 @@ curl localhost:8000/health/ready   # checks Postgres + Redis
 
 Services: `api` (FastAPI on :8000), `worker` (arq), `postgres` (with pgvector), `redis`.
 
+Database migrations: `docker compose run --rm api alembic upgrade head`
+
+### Fact-check index (optional)
+
+```bash
+cd backend
+uv sync --extra ml                    # sentence-transformers (large download)
+uv run alembic upgrade head
+uv run python -m scripts.ingest_factchecks --file path/to/claimreview_feed.json
+# then set FACTCHECK_INDEX_ENABLED=true
+```
+
+Get ClaimReview data from the [Data Commons fact-check download page](https://datacommons.org/factcheck/download).
+For Docker, build the worker with the ML runtime: `WORKER_EXTRAS="--extra ml" docker compose build worker`.
+
 ## Local development (no Docker)
 
 Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/).

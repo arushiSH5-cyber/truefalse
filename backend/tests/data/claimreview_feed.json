@@ -1,0 +1,37 @@
+{
+  "@context": "http://schema.org",
+  "@type": "DataFeed",
+  "dataFeedElement": [
+    {
+      "@type": "DataFeedItem",
+      "item": [
+        {
+          "@type": "ClaimReview",
+          "url": "https://factcheck.example.org/lemon-water-cancer",
+          "claimReviewed": "Drinking hot lemon water cures cancer",
+          "datePublished": "2023-05-02",
+          "inLanguage": "en",
+          "name": "Hot lemon water does not cure cancer",
+          "author": {"@type": "Organization", "name": "Example Fact Check", "url": "https://factcheck.example.org"},
+          "reviewRating": {"@type": "Rating", "alternateName": "False"},
+          "itemReviewed": {"@type": "Claim", "author": {"@type": "Person", "name": "Viral post"}, "datePublished": "2023-04-28"}
+        }
+      ]
+    },
+    {
+      "@type": "DataFeedItem",
+      "item": [
+        {
+          "@type": ["ClaimReview"],
+          "url": "https://verifica.example.es/5g-covid",
+          "claimReviewed": "Las antenas 5G propagan el coronavirus",
+          "datePublished": "2020-04-10",
+          "inLanguage": {"@type": "Language", "alternateName": "es"},
+          "author": [{"@type": "Organization", "name": "Verifica Ejemplo"}],
+          "reviewRating": [{"@type": "Rating", "alternateName": "Falso"}]
+        },
+        {"@type": "ClaimReview", "url": "https://missing-claim.example"}
+      ]
+    }
+  ]
+}

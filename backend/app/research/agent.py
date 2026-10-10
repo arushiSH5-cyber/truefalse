@@ -129,14 +129,21 @@ async def research(
     language: str,
     max_tool_calls: int,
     time_budget_s: float,
+    seed: Sequence[EvidenceDraft] = (),
 ) -> list[Evidence]:
     store = EvidenceStore()
-    if not sources:
-        return []
+    found = store.add(seed)
+    if not sources or max_tool_calls == 0:
+        return store.all()
     calls = await llm.run_tools(
         stage="research",
         system=prompts.render("research_agent.v1"),
-        user=prompts.render("research_task.v1", claims=_claims_block(claims), language=language),
+        user=prompts.render(
+            "research_task.v1",
+            claims=_claims_block(claims),
+            language=language,
+            already_found=_render_for_model(found) if found else "Nothing yet.",
+        ),
         tools=build_tools(sources, store),
         max_tool_calls=max_tool_calls,
         time_budget_s=time_budget_s,

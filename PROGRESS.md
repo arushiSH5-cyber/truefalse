@@ -23,10 +23,17 @@ Repo: https://github.com/arushiSH5-cyber/truefalse
 - **Extensibility**: `modality/base.py` interfaces (SpeechToText, ImageReader, TextToSpeech) and CONTRIBUTING.md for collaborators
 - **Tests**: 48 offline tests (pipeline flows, core rule, tool budget, LLM tool loop with a stubbed SDK, source parsers, HTTP retries, Telegram parsing and webhook, prompts, safety)
 
-## Next: Phase 3, fact-check index
-- Ingestion script for ClaimReview data into Postgres/pgvector (Alembic migrations start here)
-- Multilingual embeddings (LaBSE or multilingual-e5) plus BM25 hybrid search; cross-language matching tests
-- Plug the index in ahead of the research agent (a strong match skips most of the research)
+### Phase 3: Fact-check index (2026-10-10)
+- **Schema**: `factchecks` table (Alembic `0001`) with a pgvector `vector(768)` column + HNSW cosine index, and a generated `tsvector` ('simple' config, works for every language) + GIN index
+- **Parsing** (`matching/claimreview.py`): schema.org ClaimReview from DataFeed/JSON-LD files (Data Commons format) and Fact Check API results; dedupes by review URL
+- **Embeddings** (`matching/embeddings.py`): `Embedder` interface; `intfloat/multilingual-e5-base` via sentence-transformers (optional `ml` extra, lazy-loaded, runs off the event loop)
+- **Hybrid search** (`matching/factcheck_index.py`): dense (max cosine over original + English phrasings) + sparse (BM25 / `ts_rank_cd`), fused with Reciprocal Rank Fusion. Postgres and in-memory implementations share the same logic.
+- **Tokenizer** (`matching/bm25.py`): Unicode-category based, so it handles combining marks in Devanagari/Tamil/Bengali/Arabic, with character bigrams for Chinese/Japanese/Thai/Khmer/Myanmar
+- **Pipeline**: a new `match` stage runs before research. Strong matches (cosine ≥ `MATCH_STRONG_THRESHOLD`) seed the evidence store, and when every claim matches, the research budget drops to 2 confirmation searches.
+- **Ingestion**: `scripts/ingest_factchecks.py --file <DataFeed json or URL>` / `--api queries.txt --languages en,es,hi`
+- **Tests**: cross-language matching (Spanish, Hindi, Chinese, Swahili code-mix → English fact-checks) with a deterministic concept embedder; a Postgres integration test that runs in CI against pgvector; an optional `ml`-marked test with the real E5 model
+
+## Next: Phase 4, trust layer
 
 ## Deferred (planned in later phases)
 - Per-user state: first-time welcome in the detected language, language switching ("Español"), opt-in digest. These need a users table and come with Phase 3 migrations or Phase 9.
@@ -36,5 +43,6 @@ Repo: https://github.com/arushiSH5-cyber/truefalse
 
 ## Blockers / notes
 - **Not yet run against real APIs.** Every external call is tested only against fakes and saved sample responses. The first live run needs `ANTHROPIC_API_KEY` + `TELEGRAM_BOT_TOKEN` (and ideally `GOOGLE_FACTCHECK_API_KEY` and a Brave `SEARCH_API_KEY`).
+- The real E5 model test (`-m ml`) has not been run: it needs `uv sync --extra ml` (PyTorch, ~2 GB). `MATCH_STRONG_THRESHOLD=0.88` is a starting guess; tune it in Phase 8 evaluation.
 - Docker and uv are not installed on the dev Mac, so `docker compose up` has not been run locally. CI covers lint, types and tests on Python 3.12.
 - `uv.lock` is not committed yet. Run `uv lock` once uv is installed.
