@@ -11,6 +11,7 @@ from app.core.config import Settings
 from app.core.db import get_engine
 from app.core.llm import AnthropicLLM, LLMClient
 from app.core.logging import get_logger
+from app.core.models import Platform
 from app.matching.factcheck_index import FactCheckIndex, PgFactCheckIndex
 from app.modality.hashes import PgImageHashStore
 from app.modality.links import YtDlpDownloader
@@ -23,6 +24,8 @@ from app.research.sources.semantic_scholar import SemanticScholarSource
 from app.research.sources.web_search import BraveWebSearchSource
 
 if TYPE_CHECKING:
+    from app.core.jobs import JobStore
+    from app.ingestion.base import Messenger
     from app.language.detect import LanguageDetector
     from app.worker import Extras
 
@@ -69,8 +72,36 @@ def build_index(settings: Settings) -> FactCheckIndex | None:
     )
 
 
+def build_platforms(
+    settings: Settings, http: httpx.AsyncClient, jobs: "JobStore"
+) -> tuple[dict[Platform, "Messenger"], dict[Platform, MediaFetcher]]:
+    """Messengers and media fetchers for every configured platform (web is always on)."""
+    from app.core.jobs import WebMessenger, WebUploadFetcher
+    from app.ingestion.telegram import TelegramMediaFetcher, TelegramMessenger
+    from app.ingestion.whatsapp import WhatsAppClient
+
+    messengers: dict[Platform, Messenger] = {Platform.WEB: WebMessenger(jobs)}
+    fetchers: dict[Platform, MediaFetcher] = {Platform.WEB: WebUploadFetcher(jobs)}
+    if token := _secret(settings.telegram_bot_token):
+        tg = TelegramMessenger(token, settings.http_timeout_seconds)
+        messengers[Platform.TELEGRAM] = tg
+        fetchers[Platform.TELEGRAM] = TelegramMediaFetcher(tg)
+    wa_token = _secret(settings.whatsapp_token)
+    if wa_token and settings.whatsapp_phone_id:
+        wa = WhatsAppClient(
+            http, wa_token, settings.whatsapp_phone_id, settings.whatsapp_api_version
+        )
+        messengers[Platform.WHATSAPP] = wa
+        fetchers[Platform.WHATSAPP] = wa
+    return messengers, fetchers
+
+
 def build_media(
-    settings: Settings, llm: LLMClient, http: httpx.AsyncClient, fetcher: MediaFetcher | None
+    settings: Settings,
+    llm: LLMClient,
+    http: httpx.AsyncClient,
+    fetcher: MediaFetcher | None,
+    fetchers: dict[Platform, MediaFetcher] | None = None,
 ) -> MediaProviders | None:
     if not settings.media_enabled:
         return None
@@ -94,7 +125,10 @@ def build_media(
 
 
 def build_deps(
-    settings: Settings, http: httpx.AsyncClient, fetcher: MediaFetcher | None = None
+    settings: Settings,
+    http: httpx.AsyncClient,
+    fetcher: MediaFetcher | None = None,
+    fetchers: dict[Platform, MediaFetcher] | None = None,
 ) -> Deps:
     api_key = _secret(settings.anthropic_api_key)
     if not api_key:
@@ -115,7 +149,7 @@ def build_deps(
             match_strong_threshold=settings.match_strong_threshold,
         ),
         index=build_index(settings),
-        media=build_media(settings, llm, http, fetcher),
+        media=build_media(settings, llm, http, fetcher, fetchers),
         lid=build_lid(settings),
     )
 

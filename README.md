@@ -108,6 +108,25 @@ uv run mypy app
 In production, use the webhook instead: run `docker compose up`, expose `/webhooks/telegram` over
 HTTPS, and call Telegram's `setWebhook` with `secret_token=$TELEGRAM_WEBHOOK_SECRET`.
 
+## WhatsApp
+
+1. Create a Meta app with the WhatsApp product. Note the phone number ID, a permanent access token and the app secret.
+2. Set `WHATSAPP_TOKEN`, `WHATSAPP_PHONE_ID`, `WHATSAPP_APP_SECRET` and a random `WHATSAPP_VERIFY_TOKEN`.
+3. In the webhook settings, use callback URL `https://<your-host>/webhooks/whatsapp` and the same verify token, then subscribe to `messages`.
+
+Every POST is checked against `X-Hub-Signature-256`. Users can send text, photos, voice notes, videos, or links.
+
+## Web app (PWA) and share target
+
+```bash
+cd web
+cp .env.example .env.local
+npm install
+npm run dev        # http://localhost:3000
+```
+
+The PWA is installable. Once installed on Android or ChromeOS, it shows up in the system **Share** sheet, so people can share a post, reel, photo or link from WhatsApp, Instagram, YouTube, TikTok, X or any other app straight into TrueFalse. Results show the verdict, a short explanation, sources behind "More", a **Listen** button (browser speech) and a **Share correction card** (PNG rendered by the API in the user's script).
+
 ## Languages and voice
 
 - **Any language** works: the claim extractor detects the language (including romanized and code-mixed text), research runs through an English pivot, and replies come back in the user's language and script.

@@ -34,6 +34,20 @@ services:
       redis:
         condition: service_healthy
 
+  web:
+    image: node:20-alpine
+    working_dir: /app
+    command: sh -c "npm ci && npm run build && npm start"
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+      API_URL: http://api:8000
+    volumes:
+      - ./web:/app
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+
   postgres:
     image: pgvector/pgvector:pg16
     environment:

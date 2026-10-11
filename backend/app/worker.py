@@ -8,7 +8,8 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 from app.core.config import get_settings
-from app.core.container import build_deps, build_extras, build_http_client
+from app.core.container import build_deps, build_extras, build_http_client, build_platforms
+from app.core.jobs import RedisJobStore
 from app.core.logging import configure_logging, get_logger, trace_id_var
 from app.core.models import CheckReport, PartKind, ReplyTarget, Submission
 from app.core.prefs import PrefsStore, UserPrefs
@@ -16,7 +17,7 @@ from app.core.queue import redis_settings
 from app.core.trace import RunTrace
 from app.ingestion.base import Messenger
 from app.ingestion.common import FAILURE, WELCOME, WORKING_ON_MEDIA, localized
-from app.ingestion.telegram import TelegramMediaFetcher, TelegramMessenger
+from app.ingestion.router import RoutingMessenger
 from app.modality.base import TextToSpeech
 from app.pipeline import Deps, run_check
 from app.respond.translate import Translator
@@ -111,6 +112,11 @@ async def process(
         log.error("send_failed", error=str(exc))
         status = "send_failed"
 
+    finish = getattr(messenger, "finish", None)  # web jobs store the structured result
+    if finish is not None:
+        with contextlib.suppress(Exception):
+            await finish(target, report)
+
     # Voice in -> voice out; or always, if the user turned voice replies on.
     voice_sent = False
     sent_voice = any(p.kind is PartKind.AUDIO for p in submission.parts)
@@ -145,23 +151,23 @@ async def check_submission(ctx: dict[str, Any], payload: dict[str, Any]) -> str:
 async def startup(ctx: dict[str, Any]) -> None:
     settings = get_settings()
     configure_logging(settings.log_level)
-    token = settings.telegram_bot_token
-    if token is None:
-        raise RuntimeError("TELEGRAM_BOT_TOKEN is not set")
     ctx["http"] = build_http_client(settings)
-    ctx["messenger"] = TelegramMessenger(token.get_secret_value(), settings.http_timeout_seconds)
-    ctx["deps"] = build_deps(settings, ctx["http"], fetcher=TelegramMediaFetcher(ctx["messenger"]))
+    ctx["jobs"] = RedisJobStore(settings.redis_url)
+    messengers, fetchers = build_platforms(settings, ctx["http"], ctx["jobs"])
+    ctx["messenger"] = RoutingMessenger(messengers)
+    ctx["deps"] = build_deps(settings, ctx["http"], fetchers=fetchers)
     ctx["prices"] = (settings.llm_input_price_per_mtok, settings.llm_output_price_per_mtok)
     ctx["extras"] = build_extras(settings, ctx["deps"].llm)
-    log.info("worker_startup", model=settings.anthropic_model)
+    log.info(
+        "worker_startup", model=settings.anthropic_model, platforms=[p.value for p in messengers]
+    )
 
 
 async def shutdown(ctx: dict[str, Any]) -> None:
-    prefs = ctx["extras"].prefs
+    closables = [ctx["messenger"], ctx["jobs"], ctx["extras"].prefs]
     await asyncio.gather(
-        ctx["messenger"].close(),
         ctx["http"].aclose(),
-        *([prefs.close()] if hasattr(prefs, "close") else []),
+        *(c.close() for c in closables if hasattr(c, "close")),
         return_exceptions=True,
     )
 

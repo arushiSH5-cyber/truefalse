@@ -31,6 +31,14 @@ class Settings(BaseSettings):
     telegram_webhook_secret: SecretStr | None = None
     whatsapp_token: SecretStr | None = None
     whatsapp_phone_id: str | None = None
+    whatsapp_app_secret: SecretStr | None = None  # verifies X-Hub-Signature-256
+    whatsapp_verify_token: SecretStr | None = None  # webhook GET handshake
+    whatsapp_api_version: str = "v26.0"
+
+    # Web app / PWA / extension (Phase 7)
+    web_origins: str = "http://localhost:3000"  # comma-separated CORS origins
+    web_checks_per_hour: int = Field(default=20, ge=1)  # per anonymous client
+    share_card_font_dir: str = "/usr/share/fonts/truetype/noto"
 
     # Research sources
     google_factcheck_api_key: SecretStr | None = None

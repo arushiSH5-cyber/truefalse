@@ -3,7 +3,7 @@ FROM python:3.12-slim
 COPY --from=ghcr.io/astral-sh/uv:0.5 /uv /uvx /bin/
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg \
+    && apt-get install -y --no-install-recommends ffmpeg fonts-noto-core fonts-noto-cjk libraqm0 \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

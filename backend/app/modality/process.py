@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 
 from app.core.llm import LLMClient
 from app.core.logging import get_logger
-from app.core.models import Part, PartKind, Submission
+from app.core.models import Part, PartKind, Platform, Submission
 from app.modality.audio import chunk_segments, render_chunks, select_claim_chunks
 from app.modality.base import SpeechToText
 from app.modality.hashes import ImageHashStore, SeenImage
@@ -48,7 +48,8 @@ class MediaFetcher(Protocol):
 @dataclass
 class MediaProviders:
     llm: LLMClient
-    fetcher: MediaFetcher | None = None
+    fetcher: MediaFetcher | None = None  # used for any platform without its own fetcher
+    fetchers: dict[Platform, MediaFetcher] = field(default_factory=dict)
     stt: SpeechToText | None = None
     hashes: ImageHashStore | None = None
     http: httpx.AsyncClient | None = None
@@ -177,10 +178,11 @@ async def process_submission(
     for part in media_parts:
         acc.used_media = True
         try:
-            if p.fetcher is None:
+            fetcher = p.fetchers.get(submission.platform) or p.fetcher
+            if fetcher is None:
                 acc.warn(W_UNSUPPORTED)
                 continue
-            path = await p.fetcher.fetch(part, workdir)
+            path = await fetcher.fetch(part, workdir)
             if part.kind is PartKind.IMAGE:
                 await _images([path], p, acc, "image")
             elif part.kind is PartKind.AUDIO:

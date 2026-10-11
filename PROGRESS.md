@@ -64,7 +64,17 @@ Repo: https://github.com/arushiSH5-cyber/truefalse
 - **Test sets** (`eval/datasets/`): `health_cures.jsonl` (38 items: fake cures, unsafe treatments, superstitions, true controls; 20+ flagged harmful) and `multilingual_claims.jsonl` (30 items, 15 languages, 10 scripts, romanized and code-mixed)
 - **Tests**: 182 passing. CI now installs ffmpeg so the video tests run there too.
 
-## Next: Phase 7, WhatsApp + PWA
+### Phase 7: WhatsApp + PWA (2026-10-10)
+- **WhatsApp Cloud API** (`ingestion/whatsapp.py`, `api/whatsapp.py`): GET verify-token handshake; HMAC-SHA256 signature check on the raw body; batched webhooks; text, image/sticker with caption, voice/audio, video, image-video-audio documents and button replies; status updates ignored. The client handles text replies (threaded with `context`, split at 4096 chars), media download (streamed, 25 MB cap) and voice replies (upload, then send audio). Graph API version is configurable (default v26.0, per Meta's changelog).
+- **Multi-platform worker**: a `RoutingMessenger` and per-platform media fetchers (Telegram, WhatsApp, web), each enabled only when configured
+- **Web API** (`api/web.py`): `POST /api/check` (text/link/file upload, anonymous `X-Client-Id`, `Accept-Language` hint, 20 MB cap, type check, Redis rate limit per client), `GET /api/check/{id}` (status, progress, structured result), `GET /api/check/{id}/card.png`; CORS limited to `WEB_ORIGINS`
+- **Job store** (`core/jobs.py`): Redis with TTLs; uploads are deleted as soon as the worker reads them; results expire after 24 h; public results carry no user data
+- **Share card** (`respond/share_card.py`): a polite 1080×1080 PNG (verdict band, claim, explanation, top source), with Noto fonts per script (CJK, Arabic, Indic…) and RTL support via libraqm in Docker
+- **PWA** (`web/`, Next.js 14 + Tailwind): check form (text, link, photo, voice, video), result page that polls with progress, verdict colors, warnings, sources behind "More", browser text-to-speech Listen button, share-card button (Web Share API with download fallback), installable manifest with a **Web Share Target** (`/share` forwards multipart to the API), and a minimal offline-shell service worker; ~90 KB first-load JS
+- **CI**: a new `web` job (npm ci, tsc, lint, build)
+- **Tests**: 196 backend tests passing (WhatsApp parsing/signature/handshake/client, web API validation and rate limit, upload deletion, web job end-to-end, share cards in Latin/Devanagari/Arabic/Han)
+
+## Next: Phase 8, evaluation
 
 ## Deferred (planned in later phases)
 - Opt-in weekly digest (Phase 9; the preference fields already exist)
@@ -75,6 +85,7 @@ Repo: https://github.com/arushiSH5-cyber/truefalse
 ## Blockers / notes
 - Voice/video/reels need `uv sync --extra media` (faster-whisper, yt-dlp) and have not been run against real downloads; yt-dlp site support changes often, so keep it updated. The SSRF check resolves DNS before httpx connects (a small DNS-rebinding window remains; a pinned-IP transport would close it).
 - The eval dataset labels were written by the authors from public-health sources; get a second reviewer before publishing results.
+- The PWA was verified by type-check, lint and production build, but not yet clicked through against a running backend. Run `docker compose up` (or the backend + `npm run dev`) to try it end to end.
 - **Not yet run against real APIs.** Every external call is tested only against fakes and saved sample responses. The first live run needs `ANTHROPIC_API_KEY` + `TELEGRAM_BOT_TOKEN` (and ideally `GOOGLE_FACTCHECK_API_KEY` and a Brave `SEARCH_API_KEY`).
 - The real E5 model test (`-m ml`) has not been run: it needs `uv sync --extra ml` (PyTorch, ~2 GB). `MATCH_STRONG_THRESHOLD=0.88` is a starting guess; tune it in Phase 8 evaluation.
 - Docker and uv are not installed on the dev Mac, so `docker compose up` has not been run locally. CI covers lint, types and tests on Python 3.12.

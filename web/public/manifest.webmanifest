@@ -1,0 +1,24 @@
+{
+  "name": "TrueFalse — check before you forward",
+  "short_name": "TrueFalse",
+  "description": "Check forwarded messages, photos, voice notes, videos and links in any language.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f8fafc",
+  "theme_color": "#0f172a",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ],
+  "share_target": {
+    "action": "/share",
+    "method": "POST",
+    "enctype": "multipart/form-data",
+    "params": {
+      "title": "title",
+      "text": "text",
+      "url": "url",
+      "files": [{ "name": "file", "accept": ["image/*", "audio/*", "video/*"] }]
+    }
+  }
+}

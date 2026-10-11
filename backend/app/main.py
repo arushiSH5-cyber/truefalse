@@ -5,9 +5,10 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, Response
+from fastapi.middleware.cors import CORSMiddleware
 
 from app import __version__
-from app.api import health, telegram
+from app.api import health, telegram, web, whatsapp
 from app.core import db
 from app.core.config import get_settings
 from app.core.logging import configure_logging, get_logger, new_trace_id, trace_id_var
@@ -50,8 +51,16 @@ def create_app() -> FastAPI:
         )
         return response
 
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=[o.strip() for o in get_settings().web_origins.split(",") if o.strip()],
+        allow_methods=["GET", "POST"],
+        allow_headers=["X-Client-Id", "Content-Type", "Accept-Language"],
+    )
     app.include_router(health.router)
     app.include_router(telegram.router)
+    app.include_router(whatsapp.router)
+    app.include_router(web.router)
     return app
 
 
