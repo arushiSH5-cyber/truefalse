@@ -3346,7 +3346,7 @@ requires-dist = [
     { name = "arq", specifier = ">=0.26" },
     { name = "asyncpg", specifier = ">=0.29" },
     { name = "fastapi", specifier = ">=0.115" },
-    { name = "faster-whisper", marker = "extra == 'media'", specifier = ">=1.0" },
+    { name = "faster-whisper", marker = "extra == 'media'", specifier = ">=1.1" },
     { name = "fasttext-wheel", marker = "extra == 'lid'", specifier = ">=0.9.2" },
     { name = "google-genai", marker = "extra == 'gemini'", specifier = ">=1.0" },
     { name = "gtts", marker = "extra == 'voice'", specifier = ">=2.5" },

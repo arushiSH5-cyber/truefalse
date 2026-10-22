@@ -35,7 +35,7 @@ ml = [
 ]
 # Speech-to-text, public video/podcast download, article extraction; `uv sync --extra media`
 media = [
-    "faster-whisper>=1.0",
+    "faster-whisper>=1.1",  # multilingual (per-segment) language detection
     "yt-dlp>=2024.8.6",
     "trafilatura>=1.12",
 ]

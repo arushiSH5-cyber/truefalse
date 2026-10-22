@@ -20,14 +20,28 @@ SHORT_AUDIO_SECONDS = 240.0
 MAX_KEPT_CHUNKS = 8
 
 
+# Below this, Whisper's own language guess is shaky and the hint may break the tie.
+LOW_LID_CONFIDENCE = 0.5
+
+
 class FasterWhisperSTT:
-    """SpeechToText via faster-whisper (multilingual; detects the language). Needs `media` extra."""
+    """SpeechToText via faster-whisper. Needs the `media` extra.
+
+    The spoken language is always auto-detected, per segment, so code-mixed speech (Hinglish,
+    Taglish, Spanglish...) is not forced into one language. `language_hint` is the platform's UI
+    language, which often differs from the forwarded audio's language, so it is only a
+    tie-breaker: used when Whisper is unsure and the hint is one of its top three guesses.
+    """
 
     def __init__(
-        self, model_size: str = "small", device: str = "auto", compute_type: str = "int8"
+        self,
+        model_size: str = "small",
+        device: str = "auto",
+        compute_type: str = "int8",
+        model: Any = None,
     ) -> None:
         self._args = (model_size, device, compute_type)
-        self._model: Any = None
+        self._model: Any = model
 
     def _load(self) -> Any:
         if self._model is None:
@@ -38,11 +52,25 @@ class FasterWhisperSTT:
         return self._model
 
     def _run(self, path: str, language_hint: str | None) -> Transcript:
-        segments, info = self._load().transcribe(
-            path, language=language_hint, vad_filter=True, beam_size=5
-        )
+        model = self._load()
+        # No conditioning on earlier text: avoids Whisper's repetition loops on long audio.
+        opts: dict[str, Any] = {
+            "vad_filter": True,
+            "beam_size": 5,
+            "condition_on_previous_text": False,
+        }
+        # Language detection runs here; segments are produced lazily, so a re-run is cheap.
+        segments, info = model.transcribe(path, language=None, multilingual=True, **opts)
+        language: str | None = getattr(info, "language", None)
+        confidence = getattr(info, "language_probability", None) or 0.0
+        hint = (language_hint or "").split("-")[0].lower() or None
+        if hint and hint != language and confidence < LOW_LID_CONFIDENCE:
+            ranked = sorted(getattr(info, "all_language_probs", None) or [], key=lambda x: -x[1])
+            if hint in [code for code, _ in ranked[:3]]:
+                segments, info = model.transcribe(path, language=hint, **opts)
+                language = hint
         return Transcript(
-            language=getattr(info, "language", None),
+            language=language,
             segments=[
                 TranscriptSegment(start_s=s.start, end_s=s.end, text=s.text) for s in segments
             ],
