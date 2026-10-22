@@ -54,7 +54,24 @@ class ImageInput:
     data_b64: str
 
 
-class LLMClient(Protocol):
+class StructuredLLM(Protocol):
+    """Anything that returns validated structured output. Every provider adapter has this;
+    judges and other single-call stages only need this part."""
+
+    async def structured(
+        self,
+        *,
+        stage: str,
+        system: str,
+        user: str,
+        output: type[T],
+        effort: Effort = "medium",
+        max_tokens: int = 8000,
+        images: Sequence[ImageInput] = (),
+    ) -> T: ...
+
+
+class LLMClient(StructuredLLM, Protocol):
     async def structured(
         self,
         *,

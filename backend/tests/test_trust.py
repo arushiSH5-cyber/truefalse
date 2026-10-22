@@ -83,10 +83,62 @@ def _vote(verdict: Verdict, conf: Confidence = C.HIGH, cited=("E1",), expl="Evid
         ("Not real", V.FALSE),
         (None, None),
         ("Four Pinocchios", None),
+        # Negated "true" must never read as True (regression): left to the LLM fallback.
+        ("Unwahr", None),
+        ("Non vero", None),
+        ("No es cierto", None),
+        ("doğru değil", None),
+        ("सही नहीं", None),
+        ("неверно", None),
+        ("不正确", None),
+        ("ليس صحيحا", None),
+        ("Not accurate", None),
     ],
 )
 def test_normalize_rating(rating, expected) -> None:
     assert normalize_rating(rating) is expected
+
+
+async def test_resolve_ratings_llm_fallback_and_cache() -> None:
+    from app.verify import ratings
+
+    ratings._CACHE.clear()
+    llm = FakeLLM().queue(
+        "ratings",
+        ratings.RatingLabels(
+            labels=[
+                ratings.RatingLabel(index=0, verdict=V.FALSE),  # "Four Pinocchios"
+                ratings.RatingLabel(index=1, verdict=V.FALSE),  # "Non vero"
+            ]
+        ),
+    )
+    evidence = [
+        _ev("a", rating="Non vero"),
+        _ev("b", rating="Four Pinocchios"),
+        _ev("c", rating="False"),
+    ]
+    out = await ratings.resolve_ratings(llm, evidence)
+    assert [ratings.rating_verdict(e) for e in out] == [V.FALSE, V.FALSE, V.FALSE]
+    # Cached: a second call makes no LLM request (nothing else is queued, so it would fail).
+    again = await ratings.resolve_ratings(llm, [_ev("d", rating="Non vero")])
+    assert ratings.rating_verdict(again[0]) is V.FALSE
+    assert sum(c["stage"] == "ratings" for c in llm.calls) == 1
+
+
+async def test_resolve_ratings_failure_leaves_unknown() -> None:
+    from app.verify import ratings
+
+    ratings._CACHE.clear()
+    out = await ratings.resolve_ratings(FakeLLM(), [_ev("a", rating="Non vero")])
+    assert ratings.rating_verdict(out[0]) is None
+
+
+def test_negated_true_factcheck_does_not_support_true_verdict() -> None:
+    from app.verify.judges import factcheck_consensus
+
+    assert factcheck_consensus(V.TRUE, [_ev("a", rating="Non vero")]) == 0
+    resolved = _ev("a", rating="Non vero").model_copy(update={"rating_verdict": V.FALSE})
+    assert factcheck_consensus(V.TRUE, [resolved]) == -1
 
 
 def test_evidence_conflict() -> None:
