@@ -141,15 +141,18 @@ async def run_check(
         current_trace.reset(token)
 
 
-async def _language_hint(deps: Deps, text: str) -> str | None:
+async def _language_hint(deps: Deps, text: str, media_language: str | None) -> str | None:
+    """fastText guess when configured; otherwise the language speech recognition or image
+    reading detected in the media (better than nothing for short or transcribed text)."""
+    media = f"{media_language} (detected in the media)" if media_language else None
     if deps.lid is None or not text.strip():
-        return None
+        return media
     try:
         guess = await deps.lid.detect(text)
     except Exception as exc:
         log.warning("lid_failed", error=str(exc))
-        return None
-    return f"{guess.language} (confidence {guess.confidence:.2f})" if guess else None
+        return media
+    return f"{guess.language} (confidence {guess.confidence:.2f})" if guess else media
 
 
 async def _run(
@@ -170,7 +173,7 @@ async def _run(
                 deps.llm,
                 text,
                 max_claims=cfg.max_claims,
-                language_hint=await _language_hint(deps, text),
+                language_hint=await _language_hint(deps, text, processed.transcript_language),
             )
             own_text = submission_text(submission)  # not our English media labels
             if not extraction.romanized_or_mixed and (

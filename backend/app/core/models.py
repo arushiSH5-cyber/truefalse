@@ -48,11 +48,6 @@ class ReplyTarget(BaseModel):
     reply_to_message_id: str | None = None
 
 
-class ProcessedContent(BaseModel):
-    text: str
-    media_flags: list[str] = Field(default_factory=list)
-
-
 Topic = Literal["health", "superstition", "election", "emergency", "science", "other"]
 
 

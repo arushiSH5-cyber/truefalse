@@ -1,14 +1,12 @@
 """Images and screenshots via Claude vision: OCR, description, and manipulation cues."""
 
 from collections.abc import Sequence
-from pathlib import Path
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
 from app.core import prompts
 from app.core.llm import ImageInput, LLMClient
-from app.modality.base import OCRResult
-from app.modality.media import compress_image
 
 
 class ImageAnalysis(BaseModel):
@@ -24,29 +22,34 @@ class ImageAnalysis(BaseModel):
     )
 
 
-async def analyze_images(llm: LLMClient, images: Sequence[ImageInput]) -> ImageAnalysis:
-    """One vision call for one image, or for several frames of the same video."""
+ImageKind = Literal["image", "slices", "video"]
+
+
+def _instruction(kind: ImageKind, n: int) -> str:
+    if kind == "video":
+        return (
+            f"These are {n} frames from one video a user forwarded. Analyze them together as one "
+            "item."
+        )
+    if kind == "slices":
+        return (
+            f"These are {n} overlapping slices of one tall screenshot a user forwarded, from top "
+            "to bottom. Analyze them as one image: transcribe its text once, in reading order, "
+            "without repeating the lines where slices overlap."
+        )
+    return "Analyze this image that a user forwarded to be fact-checked."
+
+
+async def analyze_images(
+    llm: LLMClient, images: Sequence[ImageInput], kind: ImageKind | None = None
+) -> ImageAnalysis:
+    """One vision call: one image, the slices of one tall screenshot, or frames of one video."""
+    kind = kind or ("image" if len(images) == 1 else "video")
     return await llm.structured(
         stage="image",
         system=prompts.render("image_read.v1"),
-        user=(
-            "Analyze this image that a user forwarded to be fact-checked."
-            if len(images) == 1
-            else f"These are {len(images)} frames from one video a user forwarded. Analyze them "
-            "together as one item."
-        ),
+        user=_instruction(kind, len(images)),
         output=ImageAnalysis,
         effort="low",
         images=list(images),
     )
-
-
-class ClaudeImageReader:
-    """ImageReader implementation. Images are downscaled/recompressed before upload."""
-
-    def __init__(self, llm: LLMClient) -> None:
-        self._llm = llm
-
-    async def read(self, image_path: str) -> OCRResult:
-        a = await analyze_images(self._llm, [compress_image(Path(image_path))])
-        return OCRResult(text=a.text_in_image, description=a.description, language=a.language)

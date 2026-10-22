@@ -18,7 +18,7 @@ from app.core.models import Part, PartKind, Platform, Submission
 from app.modality.audio import chunk_segments, render_chunks, select_claim_chunks
 from app.modality.base import SpeechToText
 from app.modality.hashes import ImageHashStore, SeenImage
-from app.modality.image import analyze_images
+from app.modality.image import ImageAnalysis, ImageKind, analyze_images
 from app.modality.links import (
     LinkContent,
     YtDlpDownloader,
@@ -27,7 +27,7 @@ from app.modality.links import (
     fetch_x_post,
     find_urls,
 )
-from app.modality.media import compress_image, perceptual_hash
+from app.modality.media import compress_image, image_tiles, perceptual_hash
 from app.modality.video import MediaToolError, extract_audio, extract_keyframes
 
 log = get_logger(__name__)
@@ -87,6 +87,7 @@ W_UNSUPPORTED = "This kind of file can't be checked on this server yet."
 
 
 async def _images(paths: Sequence[Path], p: MediaProviders, acc: _Acc, label: str) -> None:
+    """label "image": each path is its own picture; "video": paths are frames of one video."""
     paths = list(paths)[:MAX_IMAGES]
     if not paths:
         return
@@ -95,7 +96,16 @@ async def _images(paths: Sequence[Path], p: MediaProviders, acc: _Acc, label: st
         acc.hashes.append(phash)
         if p.hashes and (seen := await p.hashes.lookup(phash)):
             acc.seen.append(seen)
-    a = await analyze_images(p.llm, [compress_image(x) for x in paths])
+    if label == "video":
+        _record(acc, label, await analyze_images(p.llm, [compress_image(x) for x in paths]))
+        return
+    for path in paths:
+        tiles = image_tiles(path)
+        kind: ImageKind = "slices" if len(tiles) > 1 else "image"
+        _record(acc, label, await analyze_images(p.llm, tiles, kind))
+
+
+def _record(acc: _Acc, label: str, a: ImageAnalysis) -> None:
     if a.text_in_image.strip():
         acc.texts.append(f"[Text visible in the {label}]: {a.text_in_image.strip()}")
     acc.texts.append(f"[What the {label} shows]: {a.description}")
