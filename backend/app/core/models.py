@@ -142,6 +142,7 @@ class ClaimDecision(BaseModel):
 
     judgement: ClaimJudgement
     votes: list[Verdict]
+    voters: list[str] = Field(default_factory=list)  # model label per vote, same order
     agreement: float
     probability: float  # calibrated probability that the verdict is right
     judges_disagree: bool

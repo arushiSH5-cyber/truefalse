@@ -20,6 +20,16 @@ class Settings(BaseSettings):
     # LLM
     anthropic_api_key: SecretStr | None = None
     anthropic_model: str = "claude-opus-5-5"
+    # Judge panel: comma-separated provider:model, one judge each (2-3 recommended).
+    # Providers: anthropic, openai, google. A judge whose key is missing is skipped; with
+    # fewer than 2 usable judges the panel falls back to ANTHROPIC_MODEL with three prompts.
+    judge_models: str = (
+        "anthropic:claude-opus-5-5,anthropic:claude-sonnet-5-5,anthropic:claude-haiku-5-5"
+    )
+    openai_api_key: SecretStr | None = None
+    # Send reasoning_effort to OpenAI (needs a reasoning model); turn off for other models
+    openai_reasoning_effort: bool = True
+    gemini_api_key: SecretStr | None = None
     # Server-side refusal fallback (reroutes a declined request to another model in-call)
     llm_use_fallbacks: bool = True
     # USD per million tokens, for cost metrics only
