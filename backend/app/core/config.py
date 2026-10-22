@@ -72,6 +72,20 @@ class Settings(BaseSettings):
     max_media_seconds: int = Field(default=3600, gt=0)
     image_hash_db: bool = False  # remember perceptual hashes in Postgres ("seen before")
 
+    # AI-content detection. Content Credentials (needs `--extra ai_detect`) and file metadata
+    # are free and local. The rest send the user's media to a third party: opt in by key.
+    ai_detect_enabled: bool = True
+    sightengine_api_user: str | None = None
+    sightengine_api_secret: SecretStr | None = None
+    hive_api_key: SecretStr | None = None
+    # Local Hugging Face models (`--extra ai_detect_local`); no default, choose and evaluate one
+    ai_image_model: str | None = None
+    ai_voice_model: str | None = None
+    # Reverse image search for recycled photos (Google Cloud Vision web detection)
+    google_vision_api_key: SecretStr | None = None
+    # Weak AI-written-text signal (one extra LLM call per message); never shown to users alone
+    ai_text_signal: bool = False
+
     # Languages (Phase 6)
     lid_model_path: str | None = None  # fastText lid218e.bin / lid.176.bin; needs `lid` extra
     tts_enabled: bool = True  # voice replies via gTTS; needs `voice` extra + ffmpeg

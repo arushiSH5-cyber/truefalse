@@ -29,7 +29,6 @@ from app.modality.hashes import InMemoryImageHashStore
 from app.modality.image import ImageAnalysis
 from app.modality.media import compress_image, hamming, perceptual_hash, temp_workdir
 from app.modality.process import (
-    W_AI,
     W_EDITED,
     W_MEDIA_FAILED,
     W_TRANSCRIBED,
@@ -129,7 +128,11 @@ async def test_image_submission(tmp_path) -> None:
             wd,
         )
     assert "[Text visible in the image]: Limón cura el cáncer" in out.text
-    assert W_EDITED in out.warnings and W_AI in out.warnings
+    assert W_EDITED in out.warnings
+    # The vision model's AI impression alone is a weak signal, not a user warning.
+    assert not any("AI" in w for w in out.warnings)
+    [signal] = out.ai_signals
+    assert signal.detector == "vision_llm" and signal.strength == "weak"
     assert llm.calls[0]["images"] == 1 and len(out.image_hashes) == 1
     assert not fetcher.fetched[0].exists()  # temp dir removed
 

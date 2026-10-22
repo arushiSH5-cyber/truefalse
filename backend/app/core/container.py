@@ -26,6 +26,7 @@ from app.research.sources.web_search import BraveWebSearchSource
 from app.verify.judges import MIN_VALID_JUDGES, PANEL, JudgeSpec, panel_for
 
 if TYPE_CHECKING:
+    from app.ai_detect.detector import AIDetector
     from app.core.jobs import JobStore
     from app.ingestion.base import Messenger
     from app.language.detect import LanguageDetector
@@ -113,6 +114,51 @@ def build_panel(settings: Settings, main: AnthropicLLM) -> tuple[JudgeSpec, ...]
     return panel_for(judges)
 
 
+def build_ai(settings: Settings, http: httpx.AsyncClient) -> "AIDetector | None":
+    if not settings.ai_detect_enabled:
+        return None
+    from app.ai_detect.classifiers import (
+        HFAudioClassifier,
+        HFImageClassifier,
+        HiveClassifier,
+        ScoreClassifier,
+        SightengineClassifier,
+    )
+    from app.ai_detect.credentials import ContentCredentialsCheck
+    from app.ai_detect.detector import AIDetector
+    from app.ai_detect.reverse_image import ReverseImageSearch
+
+    frames: list[ScoreClassifier] = []
+    secret = _secret(settings.sightengine_api_secret)
+    if settings.sightengine_api_user and secret:
+        frames.append(SightengineClassifier(http, settings.sightengine_api_user, secret))
+    if key := _secret(settings.hive_api_key):
+        frames.append(HiveClassifier(http, key))
+    local_ml = importlib.util.find_spec("transformers") is not None
+    if settings.ai_image_model and local_ml:
+        frames.append(HFImageClassifier(settings.ai_image_model))
+    voice = (
+        HFAudioClassifier(settings.ai_voice_model) if settings.ai_voice_model and local_ml else None
+    )
+    vision_key = _secret(settings.google_vision_api_key)
+    detector = AIDetector(
+        credentials=ContentCredentialsCheck() if importlib.util.find_spec("c2pa") else None,
+        frame_classifiers=frames,
+        voice_classifier=voice,
+        reverse_search=ReverseImageSearch(http, vision_key) if vision_key else None,
+        text_signal=settings.ai_text_signal,
+    )
+    log.info(
+        "ai_detect_enabled",
+        c2pa=detector.credentials is not None,
+        classifiers=[c.name for c in frames],
+        voice=voice is not None,
+        reverse_image=detector.reverse_search is not None,
+        ai_text=settings.ai_text_signal,
+    )
+    return detector
+
+
 def build_index(settings: Settings) -> FactCheckIndex | None:
     if not settings.factcheck_index_enabled:
         return None
@@ -171,7 +217,13 @@ def build_media(
         image_hashes=hashes is not None,
     )
     return MediaProviders(
-        llm=llm, fetcher=fetcher, stt=stt, hashes=hashes, http=http, downloader=downloader
+        llm=llm,
+        fetcher=fetcher,
+        stt=stt,
+        hashes=hashes,
+        http=http,
+        downloader=downloader,
+        ai=build_ai(settings, http),
     )
 
 
@@ -203,6 +255,7 @@ def build_deps(
         media=build_media(settings, llm, http, fetcher, fetchers),
         lid=build_lid(settings),
         panel=build_panel(settings, llm),
+        ai=build_ai(settings, http) if settings.ai_text_signal else None,
     )
 
 

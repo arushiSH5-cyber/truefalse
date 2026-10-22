@@ -140,6 +140,8 @@ async def process(
         needs_human_review=report.needs_human_review if report else False,
         review_reasons=report.review_reasons if report else [],
         voters=sorted({v for d in report.decisions for v in d.voters}) if report else [],
+        ai_overall=report.ai_report.overall if report else None,
+        ai_detectors=sorted({s.detector for s in report.ai_report.signals}) if report else [],
         stages={k: v.model_dump() for k, v in trace.stages.items()},
         cost_usd=trace.cost_usd(*prices),
         voice_reply=voice_sent,

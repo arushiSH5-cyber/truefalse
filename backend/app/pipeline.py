@@ -3,6 +3,9 @@
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 
+from app.ai_detect.detector import AIDetector
+from app.ai_detect.signals import AIReport
+from app.ai_detect.text import check_text
 from app.claims.extract import extract_claims
 from app.core.llm import LLMClient
 from app.core.logging import get_logger
@@ -66,6 +69,7 @@ class Deps:
     media: MediaProviders | None = None
     lid: LanguageDetector | None = None
     panel: Sequence[JudgeSpec] = PANEL  # judges; each may run on its own model
+    ai: AIDetector | None = None  # AI-written text signal (media checks run via `media.ai`)
 
 
 def seen_before_warnings(processed: ProcessedContent) -> list[str]:
@@ -195,10 +199,12 @@ async def _run(
     decisions: list[ClaimDecision] = []
     if extraction.claims:
         with trace.timed("match"):
-            seed, n_matched = await match_factchecks(deps.index, extraction.claims, cfg)
+            matched, n_matched = await match_factchecks(deps.index, extraction.claims, cfg)
+        # Pages that show the same picture (reverse image search) are evidence too.
+        seed = matched + processed.evidence_seed
         # Every claim already has a published fact-check: only a short confirmation search.
         budget = cfg.research_max_tool_calls
-        if seed and n_matched == len(extraction.claims):
+        if matched and n_matched == len(extraction.claims):
             budget = min(budget, 2)
         with trace.timed("research"):
             try:
@@ -230,7 +236,13 @@ async def _run(
     warnings = topic_rules.warnings(
         extraction, judgements, by_id, sources_disagree=any(d.judges_disagree for d in decisions)
     )
-    warnings = processed.warnings + seen_before_warnings(processed) + warnings
+    ai_signals = list(processed.ai_signals)
+    if deps.ai and deps.ai.text_signal:
+        ai_signals += await check_text(deps.llm, submission_text(submission))
+    ai_report = AIReport(signals=ai_signals)
+    warnings = (
+        processed.warnings + ai_report.user_warnings() + seen_before_warnings(processed) + warnings
+    )
     language = reply_language or extraction.language
     if is_lower_accuracy(extraction.language):
         warnings.append(LOWER_ACCURACY_WARNING.format(language=english_name(extraction.language)))
@@ -268,6 +280,7 @@ async def _run(
         reply_text=render_text(reply, overall, sources),
         reply_language=language,
         spoken_text=spoken_text(reply),
+        ai_report=ai_report,
         needs_human_review=any(d.needs_human_review for d in decisions),
         review_reasons=list(dict.fromkeys(d.review_reason for d in decisions if d.review_reason)),
     )

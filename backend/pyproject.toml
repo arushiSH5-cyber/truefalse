@@ -47,6 +47,15 @@ media = [
 lid = [
     "fasttext-wheel>=0.9.2",
 ]
+# AI-content detection: C2PA Content Credentials; `uv sync --extra ai_detect`
+ai_detect = [
+    "c2pa-python>=0.38",
+]
+# Local AI-image / synthetic-voice classifiers (large: PyTorch); `--extra ai_detect_local`
+ai_detect_local = [
+    "transformers>=4.44",
+    "torch>=2.3",
+]
 # Extra judge providers; `uv sync --extra openai` / `--extra gemini` (see JUDGE_MODELS)
 openai = [
     "openai>=1.92",
