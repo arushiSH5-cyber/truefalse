@@ -56,6 +56,8 @@ class Settings(BaseSettings):
     ncbi_api_key: SecretStr | None = None
     search_provider: Literal["brave", "none"] = "brave"
     search_api_key: SecretStr | None = None
+    # GDELT news search (free, no key, many languages)
+    gdelt_enabled: bool = True
 
     # Fact-check index (Phase 3)
     factcheck_index_enabled: bool = False

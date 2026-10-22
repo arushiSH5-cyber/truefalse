@@ -19,6 +19,7 @@ from app.modality.process import MediaFetcher, MediaProviders
 from app.pipeline import Deps, PipelineConfig
 from app.research.sources.base import Source
 from app.research.sources.factcheck_api import GoogleFactCheckSource
+from app.research.sources.news import BraveNewsSource, GdeltNewsSource
 from app.research.sources.pubmed import PubMedSource
 from app.research.sources.semantic_scholar import SemanticScholarSource
 from app.research.sources.web_search import BraveWebSearchSource
@@ -59,6 +60,9 @@ def build_sources(settings: Settings, http: httpx.AsyncClient) -> list[Source]:
     sources.append(PubMedSource(http, _secret(settings.ncbi_api_key)))
     if settings.search_provider == "brave" and (key := _secret(settings.search_api_key)):
         sources.append(BraveWebSearchSource(http, key))
+        sources.append(BraveNewsSource(http, key))
+    if settings.gdelt_enabled:
+        sources.append(GdeltNewsSource(http))
     log.info("sources_enabled", sources=[s.kind.value for s in sources])
     return sources
 
