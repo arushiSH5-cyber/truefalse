@@ -12,6 +12,7 @@ from uuid import uuid4
 from pydantic import BaseModel, Field
 from redis.asyncio import Redis
 
+from app.ai_detect.signals import AISignal
 from app.core.models import CheckReport, Part, ReplyTarget
 
 RESULT_TTL_S = 24 * 3600
@@ -40,6 +41,8 @@ class PublicResult(BaseModel):
     sources: list[PublicSource]
     claims: list[str]
     needs_human_review: bool = False
+    ai_overall: str = "no_signal"  # likely_ai | possibly_ai | recycled | edited | no_signal
+    ai_signals: list[AISignal] = Field(default_factory=list)  # all of them, weak ones included
 
 
 class JobRecord(BaseModel):
@@ -72,6 +75,8 @@ def public_result(report: CheckReport) -> PublicResult:
         ],
         claims=[c.original for c in report.claims],
         needs_human_review=report.needs_human_review,
+        ai_overall=report.ai_report.overall,
+        ai_signals=report.ai_report.signals,
     )
 
 

@@ -7,6 +7,8 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
+from app.ai_detect.signals import AIReport
+
 
 class Platform(StrEnum):
     TELEGRAM = "telegram"
@@ -189,4 +191,6 @@ class CheckReport(BaseModel):
     reply_language: str = "en"
     needs_human_review: bool = False
     review_reasons: list[str] = Field(default_factory=list)
+    # AI-content / recycled-media checks: separate from the claim verdict, never changes it.
+    ai_report: AIReport = Field(default_factory=AIReport)
     spoken_text: str = ""  # short version for voice replies (no links)
