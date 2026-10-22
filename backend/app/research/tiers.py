@@ -1,86 +1,22 @@
 """Source tiering by domain.
 
 Tier 1: peer-reviewed research and official bodies (health agencies, governments, election bodies)
-Tier 2: news wires and IFCN-signatory fact-checkers
+Tier 2: news wires, public broadcasters and fact-checkers
 Tier 3: everything else
+
+The lists live in tiers.json so they can grow without code changes. Official domains are
+recognized by pattern in every country (gov.*, gob.*, gouv.*, govt.*, ...), not by a fixed list.
 """
 
+import json
+import re
+from pathlib import Path
 from urllib.parse import urlparse
 
-TIER1_DOMAINS = {
-    "who.int",
-    "cdc.gov",
-    "nih.gov",
-    "ncbi.nlm.nih.gov",
-    "pubmed.ncbi.nlm.nih.gov",
-    "cochranelibrary.com",
-    "cochrane.org",
-    "ecdc.europa.eu",
-    "ema.europa.eu",
-    "fda.gov",
-    "nhs.uk",
-    "gov.uk",
-    "europa.eu",
-    "un.org",
-    "unicef.org",
-    "paho.org",
-    "mohfw.gov.in",
-    "icmr.gov.in",
-    "eci.gov.in",
-    "semanticscholar.org",
-    "nature.com",
-    "thelancet.com",
-    "nejm.org",
-    "bmj.com",
-    "science.org",
-    "cell.com",
-    "jamanetwork.com",
-    "plos.org",
-}
-TIER2_DOMAINS = {
-    "reuters.com",
-    "apnews.com",
-    "afp.com",
-    "factcheck.afp.com",
-    "bbc.com",
-    "bbc.co.uk",
-    "snopes.com",
-    "politifact.com",
-    "factcheck.org",
-    "fullfact.org",
-    "boomlive.in",
-    "altnews.in",
-    "maldita.es",
-    "newtral.es",
-    "chequeado.com",
-    "africacheck.org",
-    "aosfatos.org",
-    "lupa.uol.com.br",
-    "factly.in",
-    "vishvasnews.com",
-    "teyit.org",
-    "correctiv.org",
-    "dpa.com",
-    "efe.com",
-    "verificat.cat",
-    "pesacheck.org",
-    "rappler.com",
-}
-OFFICIAL_SUFFIXES = (
-    ".gov",
-    ".gov.in",
-    ".gov.uk",
-    ".gob.mx",
-    ".gob.es",
-    ".gov.br",
-    ".go.id",
-    ".go.ke",
-    ".gov.za",
-    ".gc.ca",
-    ".gov.au",
-    ".mil",
-    ".int",
-)
+_DATA = json.loads(Path(__file__).with_name("tiers.json").read_text(encoding="utf-8"))
+TIER1_DOMAINS: frozenset[str] = frozenset(_DATA["tier1_domains"])
+TIER2_DOMAINS: frozenset[str] = frozenset(_DATA["tier2_domains"])
+OFFICIAL_PATTERNS = [re.compile(p) for p in _DATA["official_patterns"]]
 
 
 def domain_of(url: str) -> str:
@@ -88,13 +24,17 @@ def domain_of(url: str) -> str:
     return host.removeprefix("www.")
 
 
-def _matches(host: str, domains: set[str]) -> bool:
+def _matches(host: str, domains: frozenset[str]) -> bool:
     return any(host == d or host.endswith("." + d) for d in domains)
+
+
+def is_official(host: str) -> bool:
+    return any(p.search(host) for p in OFFICIAL_PATTERNS)
 
 
 def tier_for_url(url: str) -> int:
     host = domain_of(url)
-    if _matches(host, TIER1_DOMAINS) or host.endswith(OFFICIAL_SUFFIXES):
+    if _matches(host, TIER1_DOMAINS) or is_official(host):
         return 1
     if _matches(host, TIER2_DOMAINS):
         return 2

@@ -99,6 +99,7 @@ class SourceKind(StrEnum):
     SEMANTIC_SCHOLAR = "semantic_scholar"
     PUBMED = "pubmed"
     WEB = "web"
+    NEWS = "news"
 
 
 class EvidenceDraft(BaseModel):
