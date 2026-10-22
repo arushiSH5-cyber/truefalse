@@ -1,7 +1,7 @@
 # TrueFalse
 
 A multilingual, multimodal AI misinformation checker.
-Authors: **Arushi Nirmal** and **Arpanjeet Singh** (San José State University).
+Authors: Arushi Nirmal (San José State University).
 
 Forward a suspicious message, screenshot, voice note, video or link, and TrueFalse
 pulls out the factual claims and checks them against published fact-checks and trusted
