@@ -227,5 +227,21 @@ these errors (claims are cross-checked against evidence, and users see an "auto-
 warning). Not run live: image OCR (needs the Claude API). Mixing inside one sentence (e.g.
 Hinglish) is still decoded in one language: a Whisper limit.
 
+### M3 — Video + AI-content detection: done (2026-10-22)
+
+| Item | Status | Where |
+|---|---|---|
+| Video keyframes: even + scene cuts (≤ 8), on-screen text per frame with timestamps | ✅ verified on a real video with known cuts | `modality/video.py`, `prompts/video_read.v1.md` |
+| C2PA Content Credentials (AI source, camera capture, tampered) | ✅ verified on real signed files | `ai_detect/credentials.py` |
+| File metadata (IPTC AI source type, EXIF generator, SD/ComfyUI PNG params) | ✅ | `ai_detect/metadata.py` |
+| Deepfake / AI-image classifiers on frames (Sightengine, Hive, local HF) | ✅ code + parsers; ⚠️ not run against live APIs | `ai_detect/classifiers.py` |
+| Synthetic-voice check (local HF audio model) | ✅ code; ⚠️ no default model, needs choosing + evaluating | `ai_detect/classifiers.py` |
+| Reverse image search for recycled photos (Cloud Vision + page dates) | ✅ code; ⚠️ not run against the live API | `ai_detect/reverse_image.py` |
+| AI-written text, weak signal only, off by default | ✅ | `ai_detect/text.py` |
+| Signals combined; users only see strong/corroborated ones; vision-LLM guess is weak | ✅ | `ai_detect/signals.py` |
+
+Watermarks other than C2PA (e.g. SynthID) are not checked: no public detector API.
+CI only runs on pushes to `main` and on pull requests, so this branch has not been through CI yet.
+
 Found while working: `backend/Dockerfile` pins `uv:0.5`, while `uv.lock` (already on `main`) is
 lock revision 5 from a newer uv. Worth bumping the Dockerfile's uv image before the next Docker build.
