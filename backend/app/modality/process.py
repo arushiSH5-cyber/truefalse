@@ -15,10 +15,16 @@ from pydantic import BaseModel, Field
 from app.core.llm import LLMClient
 from app.core.logging import get_logger
 from app.core.models import Part, PartKind, Platform, Submission
-from app.modality.audio import chunk_segments, render_chunks, select_claim_chunks
+from app.modality.audio import chunk_segments, fmt_time, render_chunks, select_claim_chunks
 from app.modality.base import SpeechToText
 from app.modality.hashes import ImageHashStore, SeenImage
-from app.modality.image import ImageAnalysis, ImageKind, analyze_images
+from app.modality.image import (
+    ImageAnalysis,
+    ImageKind,
+    VideoAnalysis,
+    analyze_images,
+    analyze_video,
+)
 from app.modality.links import (
     LinkContent,
     YtDlpDownloader,
@@ -28,12 +34,14 @@ from app.modality.links import (
     find_urls,
 )
 from app.modality.media import compress_image, image_tiles, perceptual_hash
-from app.modality.video import MediaToolError, extract_audio, extract_keyframes
+from app.modality.video import Frame, MediaToolError, extract_audio, extract_frames
 
 log = get_logger(__name__)
 
 MAX_LINKS = 2
 MAX_IMAGES = 4
+# Keyframes are smaller than photos: 8 frames at full size would cost a lot of tokens.
+VIDEO_FRAME_EDGE = 1024
 MAX_AUDIO_SECONDS = 3600.0
 
 ProgressFn = Callable[[str], Awaitable[None]]
@@ -86,28 +94,41 @@ W_MEDIA_FAILED = "We could not open part of what you sent, so we checked only th
 W_UNSUPPORTED = "This kind of file can't be checked on this server yet."
 
 
-async def _images(paths: Sequence[Path], p: MediaProviders, acc: _Acc, label: str) -> None:
-    """label "image": each path is its own picture; "video": paths are frames of one video."""
-    paths = list(paths)[:MAX_IMAGES]
-    if not paths:
-        return
-    for path in paths if label == "image" else paths[:1]:
-        phash = perceptual_hash(path)
-        acc.hashes.append(phash)
-        if p.hashes and (seen := await p.hashes.lookup(phash)):
-            acc.seen.append(seen)
-    if label == "video":
-        _record(acc, label, await analyze_images(p.llm, [compress_image(x) for x in paths]))
-        return
-    for path in paths:
+async def _remember(path: Path, p: MediaProviders, acc: _Acc) -> None:
+    phash = perceptual_hash(path)
+    acc.hashes.append(phash)
+    if p.hashes and (seen := await p.hashes.lookup(phash)):
+        acc.seen.append(seen)
+
+
+async def _images(paths: Sequence[Path], p: MediaProviders, acc: _Acc) -> None:
+    for path in list(paths)[:MAX_IMAGES]:
+        await _remember(path, p, acc)
         tiles = image_tiles(path)
         kind: ImageKind = "slices" if len(tiles) > 1 else "image"
-        _record(acc, label, await analyze_images(p.llm, tiles, kind))
+        a = await analyze_images(p.llm, tiles, kind)
+        if a.text_in_image.strip():
+            acc.texts.append(f"[Text visible in the image]: {a.text_in_image.strip()}")
+        _record(acc, "image", a)
 
 
-def _record(acc: _Acc, label: str, a: ImageAnalysis) -> None:
-    if a.text_in_image.strip():
-        acc.texts.append(f"[Text visible in the {label}]: {a.text_in_image.strip()}")
+async def _frames(frames: Sequence[Frame], p: MediaProviders, acc: _Acc) -> None:
+    await _remember(frames[0].path, p, acc)
+    a = await analyze_video(
+        p.llm, [(f.time_s, compress_image(f.path, VIDEO_FRAME_EDGE)) for f in frames]
+    )
+    times = {i: f.time_s for i, f in enumerate(frames, 1)}
+    lines = [
+        f"[{fmt_time(times[t.frame])}] {t.text.strip()}"
+        for t in a.on_screen_text
+        if t.text.strip() and t.frame in times
+    ]
+    if lines:
+        acc.texts.append("[Text on screen in the video, with timestamps]:\n" + "\n".join(lines))
+    _record(acc, "video", a)
+
+
+def _record(acc: _Acc, label: str, a: ImageAnalysis | VideoAnalysis) -> None:
     acc.texts.append(f"[What the {label} shows]: {a.description}")
     if a.possible_editing_signs:
         acc.warn(W_EDITED)
@@ -131,13 +152,13 @@ async def _audio(path: Path, p: MediaProviders, acc: _Acc, label: str, hint: str
 async def _video(path: Path, workdir: Path, p: MediaProviders, acc: _Acc, hint: str | None) -> None:
     try:
         audio = await extract_audio(path, workdir, MAX_AUDIO_SECONDS)
-        frames = await extract_keyframes(path, workdir)
+        frames = await extract_frames(path, workdir)
     except MediaToolError as exc:
         log.warning("video_failed", error=str(exc))
         acc.warn(W_MEDIA_FAILED)
         return
     if frames:
-        await _images(frames, p, acc, "video")
+        await _frames(frames, p, acc)
     if audio:
         await _audio(audio, p, acc, "Video audio", hint)
 
@@ -194,7 +215,7 @@ async def process_submission(
                 continue
             path = await fetcher.fetch(part, workdir)
             if part.kind is PartKind.IMAGE:
-                await _images([path], p, acc, "image")
+                await _images([path], p, acc)
             elif part.kind is PartKind.AUDIO:
                 await _audio(path, p, acc, "Voice note", hint)
             elif part.kind is PartKind.VIDEO:
