@@ -9,7 +9,7 @@ import httpx
 
 from app.core.config import Settings
 from app.core.db import get_engine
-from app.core.llm import AnthropicLLM, LLMClient
+from app.core.llm import AnthropicLLM, LLMClient, StructuredLLM
 from app.core.logging import get_logger
 from app.core.models import Platform
 from app.matching.factcheck_index import FactCheckIndex, PgFactCheckIndex
@@ -22,6 +22,7 @@ from app.research.sources.factcheck_api import GoogleFactCheckSource
 from app.research.sources.pubmed import PubMedSource
 from app.research.sources.semantic_scholar import SemanticScholarSource
 from app.research.sources.web_search import BraveWebSearchSource
+from app.verify.judges import MIN_VALID_JUDGES, PANEL, JudgeSpec, panel_for
 
 if TYPE_CHECKING:
     from app.core.jobs import JobStore
@@ -60,6 +61,52 @@ def build_sources(settings: Settings, http: httpx.AsyncClient) -> list[Source]:
         sources.append(BraveWebSearchSource(http, key))
     log.info("sources_enabled", sources=[s.kind.value for s in sources])
     return sources
+
+
+def _judge_llm(
+    settings: Settings, main: AnthropicLLM, provider: str, model: str
+) -> StructuredLLM | None:
+    """One judge's client, or None (logged) if its key or SDK extra is missing."""
+    if provider == "anthropic":
+        return main if model == main.model else main.with_model(model)
+    key_name, extra, module = {
+        "openai": ("OPENAI_API_KEY", "openai", "openai"),
+        "google": ("GEMINI_API_KEY", "gemini", "google.genai"),
+    }[provider]
+    key = _secret(getattr(settings, key_name.lower()))
+    if not key:
+        log.warning("judge_skipped", model=f"{provider}:{model}", reason=f"{key_name} not set")
+        return None
+    if not importlib.util.find_spec(module.split(".")[0]):
+        log.warning("judge_skipped", model=f"{provider}:{model}", reason=f"needs --extra {extra}")
+        return None
+    from app.core.providers import GeminiLLM, OpenAILLM
+
+    if provider == "openai":
+        return OpenAILLM(
+            key,
+            model,
+            max_retries=settings.http_max_retries,
+            send_reasoning_effort=settings.openai_reasoning_effort,
+        )
+    return GeminiLLM(key, model)
+
+
+def build_panel(settings: Settings, main: AnthropicLLM) -> tuple[JudgeSpec, ...]:
+    from app.core.providers import parse_model_specs
+
+    judges: list[tuple[str, StructuredLLM]] = []
+    for provider, model in parse_model_specs(settings.judge_models):
+        llm = _judge_llm(settings, main, provider, model)
+        if llm is not None:
+            judges.append((f"{provider}:{model}", llm))
+    if len(judges) < MIN_VALID_JUDGES:
+        log.warning("judge_panel_single_model", model=main.model)
+        return tuple(
+            JudgeSpec(s.name, s.prompt, s.effort, main, f"anthropic:{main.model}") for s in PANEL
+        )
+    log.info("judge_panel", judges=[label for label, _ in judges])
+    return panel_for(judges)
 
 
 def build_index(settings: Settings) -> FactCheckIndex | None:
@@ -151,6 +198,7 @@ def build_deps(
         index=build_index(settings),
         media=build_media(settings, llm, http, fetcher, fetchers),
         lid=build_lid(settings),
+        panel=build_panel(settings, llm),
     )
 
 

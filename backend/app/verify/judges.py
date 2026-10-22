@@ -1,18 +1,19 @@
 """Verification: a panel of independent judges, combined into a calibrated decision.
 
-Each judge sees the same claims + evidence through a different lens (prompt) and must cite
-evidence ids. The core rule is applied to every vote and again to the final decision.
-Disagreement between judges, or weak evidence, ends in "Unverified".
+Each judge is a different LLM (e.g. Claude Opus + Sonnet + Haiku, or Claude + GPT + Gemini) and
+reads the same claims + evidence through its own lens (prompt). Judges must cite evidence ids.
+The core rule is applied to every vote and again to the final decision. Disagreement between
+judges, or weak evidence, ends in "Unverified" and is flagged for human review.
 """
 
 import asyncio
 import json
 from collections import Counter
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from app.core import prompts
-from app.core.llm import Effort, LLMClient
+from app.core.llm import Effort, StructuredLLM
 from app.core.logging import get_logger
 from app.core.models import (
     Claim,
@@ -51,14 +52,27 @@ class JudgeSpec:
     name: str
     prompt: str
     effort: Effort
+    llm: StructuredLLM | None = None  # None: the pipeline's main LLM
+    model: str = "default"  # "provider:model" label, recorded with each vote
 
 
+# The three lenses. With one LLM this is the whole panel (same model, three prompts).
 PANEL = (
     JudgeSpec("balanced", "judge.v1", "high"),
     JudgeSpec("skeptic", "judge_skeptic.v1", "high"),
     JudgeSpec("context", "judge_context.v1", "medium"),
 )
 MIN_VALID_JUDGES = 2
+
+
+def panel_for(llms: Sequence[tuple[str, StructuredLLM]]) -> tuple[JudgeSpec, ...]:
+    """One judge per (label, llm), each with its own lens so the models also differ in view."""
+    specs = []
+    for i, (label, llm) in enumerate(llms):
+        lens = PANEL[i % len(PANEL)]
+        name = lens.name if i < len(PANEL) else f"{lens.name}{i}"
+        specs.append(replace(lens, name=name, llm=llm, model=label))
+    return tuple(specs)
 
 
 def _unverified(index: int, explanation: str = NO_SOURCE_EXPLANATION) -> ClaimJudgement:
@@ -119,6 +133,7 @@ def decide(
     votes: Sequence[ClaimJudgement],
     evidence: dict[str, Evidence],
     calibrator: Calibrator,
+    voters: Sequence[str] = (),
 ) -> ClaimDecision:
     """Combine one claim's (core-rule-checked) votes into a final decision."""
     verdicts = [v.verdict for v in votes]
@@ -129,6 +144,7 @@ def decide(
         return ClaimDecision(
             judgement=judgement,
             votes=verdicts,
+            voters=list(voters),
             agreement=round(agreement, 3),
             probability=round(p, 3),
             judges_disagree=disagree,
@@ -207,10 +223,10 @@ def _evidence_block(evidence: Sequence[Evidence]) -> str:
 
 
 async def _one_judge(
-    llm: LLMClient, spec: JudgeSpec, claims_text: str, evidence_text: str
+    llm: StructuredLLM, spec: JudgeSpec, claims_text: str, evidence_text: str
 ) -> list[ClaimJudgement] | None:
     try:
-        out = await llm.structured(
+        out = await (spec.llm or llm).structured(
             stage=f"verify.{spec.name}",
             system=prompts.render(spec.prompt),
             user=prompts.render("judge_task.v1", claims=claims_text, evidence=evidence_text),
@@ -219,12 +235,12 @@ async def _one_judge(
         )
         return out.judgements
     except Exception as exc:  # one judge failing must not sink the panel
-        log.warning("judge_failed", judge=spec.name, error=str(exc))
+        log.warning("judge_failed", judge=spec.name, model=spec.model, error=str(exc))
         return None
 
 
 async def judge(
-    llm: LLMClient,
+    llm: StructuredLLM,
     claims: Sequence[Claim],
     evidence: Sequence[Evidence],
     *,
@@ -258,11 +274,13 @@ async def judge(
     decisions: list[ClaimDecision] = []
     for i in range(len(claims)):
         votes: list[ClaimJudgement] = []
-        for out in outputs:
+        voters: list[str] = []
+        for spec, out in zip(panel, outputs, strict=True):
             if out is None:
                 continue
             mine = next((j for j in out if j.claim_index == i), None)
             if mine is not None:
                 votes.append(enforce_core_rule(mine, by_id))
-        decisions.append(decide(i, votes, by_id, calibrator))
+                voters.append(spec.model)
+        decisions.append(decide(i, votes, by_id, calibrator, voters))
     return decisions

@@ -37,8 +37,8 @@ from app.research.sources.base import Source
 from app.respond.compose import compose, render_text, spoken_text
 from app.safety import topic_rules
 from app.safety.grounding_check import ground
+from app.verify.judges import PANEL, JudgeSpec, overall_verdict
 from app.verify.judges import judge as run_judge
-from app.verify.judges import overall_verdict
 
 log = get_logger(__name__)
 
@@ -65,6 +65,7 @@ class Deps:
     index: FactCheckIndex | None = None
     media: MediaProviders | None = None
     lid: LanguageDetector | None = None
+    panel: Sequence[JudgeSpec] = PANEL  # judges; each may run on its own model
 
 
 def seen_before_warnings(processed: ProcessedContent) -> list[str]:
@@ -211,7 +212,7 @@ async def _run(
                 log.warning("research_failed", error=str(exc))
         by_id = {e.id: e for e in evidence}
         with trace.timed("verify"):
-            decisions = await run_judge(deps.llm, extraction.claims, evidence)
+            decisions = await run_judge(deps.llm, extraction.claims, evidence, panel=deps.panel)
         with trace.timed("ground"):
             decisions = await ground(deps.llm, decisions, by_id)
         judgements = [d.judgement for d in decisions]
