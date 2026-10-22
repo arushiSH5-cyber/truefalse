@@ -185,3 +185,26 @@ Each milestone ends with tests, ruff and mypy passing and one or more small comm
 - **Judge models:** do you have (or want to get) **OpenAI** and/or **Gemini** keys, or should the panel default to Opus + Sonnet + Haiku?
 - **Paid detectors:** OK to add optional adapters for Google Cloud Vision (reverse image) and Sightengine/Hive (deepfake), used only if a key is set?
 - **Module renames:** keep current package names (recommended) or rename to the proposal's names at the end?
+
+---
+
+## 6. Progress
+
+### M1 — Text pipeline: done (2026-10-22)
+
+| Item | Status | Where |
+|---|---|---|
+| Ratings negation bug + LLM fallback for any-language ratings | ✅ | `verify/ratings.py`, `prompts/rating_normalize.v1.md` |
+| Claims carry `who/did/where/when` + `local_languages` | ✅ | `core/models.py`, `prompts/claim_extract.v2.md` |
+| Judges on different models (default Opus 5.5 + Sonnet 5.5 + Haiku 5.5), optional OpenAI/Gemini | ✅ | `verify/judges.py`, `core/providers.py`, `JUDGE_MODELS` |
+| News search (Brave News + GDELT), one tool per source kind with fan-out | ✅ | `research/sources/news.py`, `research/agent.py` |
+| Fact-check lookups guaranteed in code (English + message language) | ✅ | `research/agent.py::baseline_searches` |
+| Tier lists as data, official domains by pattern worldwide, wider fact-checker list | ✅ | `research/tiers.json` |
+| `needs_human_review` + reason on decisions, report, web API, metrics | ✅ | `verify/judges.py`, `core/jobs.py`, `worker.py` |
+| Per-model token pricing in cost metrics | ✅ | `core/trace.py`, `core/llm.py` |
+
+Not done in M1, by design: a human review queue (the flag exists; a queue/export comes with eval or later).
+Not verified: nothing has run against live APIs yet (same as before this branch).
+
+Found while working: `backend/Dockerfile` pins `uv:0.5`, while `uv.lock` (already on `main`) is
+lock revision 5 from a newer uv. Worth bumping the Dockerfile's uv image before the next Docker build.
