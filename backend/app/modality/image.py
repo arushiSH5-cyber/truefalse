@@ -22,6 +22,26 @@ class ImageAnalysis(BaseModel):
     )
 
 
+class FrameText(BaseModel):
+    frame: int = Field(description="Frame number as given (1 = first frame)")
+    text: str = Field(description="Readable text in this frame, verbatim, original language")
+
+
+class VideoAnalysis(BaseModel):
+    on_screen_text: list[FrameText] = Field(
+        description="Text visible in each frame; skip frames with no text or the same text as "
+        "the frame before"
+    )
+    description: str = Field(description="1-3 neutral sentences in English on what the video shows")
+    language: str | None = Field(description="BCP-47 code of the on-screen text, or null")
+    possible_editing_signs: list[str] = Field(
+        description="Concrete visual cues of editing or manipulation; empty if none"
+    )
+    possibly_ai_generated: bool = Field(
+        description="True only with concrete visual cues of AI generation"
+    )
+
+
 ImageKind = Literal["image", "slices", "video"]
 
 
@@ -52,4 +72,22 @@ async def analyze_images(
         output=ImageAnalysis,
         effort="low",
         images=list(images),
+    )
+
+
+async def analyze_video(
+    llm: LLMClient, frames: Sequence[tuple[float, ImageInput]]
+) -> VideoAnalysis:
+    """One vision call over a video's keyframes; on-screen text comes back per frame."""
+    from app.modality.audio import fmt_time
+
+    listing = ", ".join(f"frame {i} at {fmt_time(t)}" for i, (t, _) in enumerate(frames, 1))
+    return await llm.structured(
+        stage="video",
+        system=prompts.render("video_read.v1"),
+        user=f"These are {len(frames)} keyframes from one video a user forwarded, in order: "
+        f"{listing}.",
+        output=VideoAnalysis,
+        effort="low",
+        images=[img for _, img in frames],
     )
