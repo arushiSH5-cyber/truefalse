@@ -147,6 +147,10 @@ class ClaimDecision(BaseModel):
     agreement: float
     probability: float  # calibrated probability that the verdict is right
     judges_disagree: bool
+    # Set when the panel disagrees, a cited fact-check contradicts the verdict, or too few judges
+    # could vote. The verdict is then Unverified: we flag for a person, we never guess.
+    needs_human_review: bool = False
+    review_reason: str | None = None
     grounded_ratio: float = 1.0  # share of explanation sentences kept by the grounding check
 
 
@@ -188,4 +192,6 @@ class CheckReport(BaseModel):
     warnings: list[str]
     reply_text: str
     reply_language: str = "en"
+    needs_human_review: bool = False
+    review_reasons: list[str] = Field(default_factory=list)
     spoken_text: str = ""  # short version for voice replies (no links)

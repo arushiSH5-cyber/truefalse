@@ -39,6 +39,7 @@ class PublicResult(BaseModel):
     warnings: list[str]
     sources: list[PublicSource]
     claims: list[str]
+    needs_human_review: bool = False
 
 
 class JobRecord(BaseModel):
@@ -70,6 +71,7 @@ def public_result(report: CheckReport) -> PublicResult:
             for e in sources[:6]
         ],
         claims=[c.original for c in report.claims],
+        needs_human_review=report.needs_human_review,
     )
 
 

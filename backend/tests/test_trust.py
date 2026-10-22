@@ -310,3 +310,69 @@ async def test_grounding_skips_unverified() -> None:
     )
     assert await ground(llm, [unv], EVIDENCE) == [unv]
     assert llm.calls == []
+
+
+# ---- human review flag ---------------------------------------------------------------------
+
+
+def test_review_flag_reasons() -> None:
+    from app.verify.judges import (
+        JUDGES_FAILED_EXPLANATION,
+        REVIEW_FACTCHECK_CONTRADICTS,
+        REVIEW_JUDGES_DISAGREE,
+        REVIEW_TOO_FEW_JUDGES,
+    )
+
+    agree = decide(0, [_vote(V.FALSE, cited=("E1", "E2"))] * 3, EVIDENCE, Calibrator())
+    assert not agree.needs_human_review and agree.review_reason is None
+
+    split = decide(0, [_vote(V.FALSE), _vote(V.TRUE), _vote(V.UNVERIFIED)], EVIDENCE, Calibrator())
+    assert split.needs_human_review and split.review_reason == REVIEW_JUDGES_DISAGREE
+
+    contra = decide(0, [_vote(V.TRUE, cited=("E1", "E2"))] * 3, EVIDENCE, Calibrator())
+    assert contra.review_reason == REVIEW_FACTCHECK_CONTRADICTS
+
+    lonely = decide(0, [_vote(V.FALSE)], EVIDENCE, Calibrator())
+    assert lonely.review_reason == REVIEW_TOO_FEW_JUDGES
+    assert lonely.judgement.explanation == JUDGES_FAILED_EXPLANATION
+
+    # Weak evidence is plain Unverified, not a disagreement: no review needed.
+    weak = decide(0, [_vote(V.UNVERIFIED, cited=())] * 3, EVIDENCE, Calibrator())
+    assert weak.judgement.verdict is V.UNVERIFIED and not weak.needs_human_review
+
+
+async def test_no_evidence_is_unverified_without_review() -> None:
+    (d,) = await judge(FakeLLM(), [CLAIM], [])
+    assert d.judgement.verdict is V.UNVERIFIED and not d.needs_human_review
+
+
+async def test_report_and_public_result_carry_review_flag(
+    submission, spanish_health_extraction, factcheck_draft
+) -> None:
+    from app.core.jobs import public_result
+    from app.core.models import ComposedReply
+    from app.core.models import SourceKind as SK
+    from app.pipeline import Deps, run_check
+    from tests.fakes import FakeSource
+
+    llm = FakeLLM().queue("extract", spanish_health_extraction)
+    llm.queue_panel(
+        JudgePanelOutput(judgements=[_vote(V.FALSE, cited=("E1",))]),
+        JudgePanelOutput(judgements=[_vote(V.TRUE, cited=("E1",))]),
+        JudgePanelOutput(judgements=[_vote(V.UNVERIFIED, cited=())]),
+    )
+    llm.queue(
+        "compose",
+        ComposedReply(
+            verdict_label="No verificado",
+            explanation="x",
+            confidence_label="c",
+            warnings=[],
+            safety_note=None,
+            sources_heading="Fuentes",
+        ),
+    )
+    report = await run_check(submission, Deps(llm, [FakeSource(SK.FACTCHECK, [factcheck_draft])]))
+    assert report.overall is V.UNVERIFIED
+    assert report.needs_human_review and report.review_reasons == ["judges_disagree"]
+    assert public_result(report).needs_human_review

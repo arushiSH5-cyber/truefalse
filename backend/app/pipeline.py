@@ -265,4 +265,6 @@ async def _run(
         reply_text=render_text(reply, overall, sources),
         reply_language=language,
         spoken_text=spoken_text(reply),
+        needs_human_review=any(d.needs_human_review for d in decisions),
+        review_reasons=list(dict.fromkeys(d.review_reason for d in decisions if d.review_reason)),
     )
