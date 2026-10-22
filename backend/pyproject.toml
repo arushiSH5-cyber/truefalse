@@ -36,6 +36,9 @@ ml = [
 # Speech-to-text, public video/podcast download, article extraction; `uv sync --extra media`
 media = [
     "faster-whisper>=1.1",  # multilingual (per-segment) language detection
+    # PyAV 19 dropped the `metadata_errors` argument faster-whisper 1.2 passes; every
+    # audio decode fails with it. Lift once faster-whisper supports PyAV 19.
+    "av<19",
     "yt-dlp>=2024.8.6",
     "trafilatura>=1.12",
 ]
