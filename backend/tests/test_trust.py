@@ -42,7 +42,17 @@ def _ev(
 
 
 EVIDENCE = {"E1": _ev("E1", 1), "E2": _ev("E2", 2, rating="False"), "E3": _ev("E3", 3)}
-CLAIM = Claim(original="o", english="Lemon cures cancer", topic="health", potentially_harmful=True)
+CLAIM = Claim(
+    original="o",
+    english="Lemon cures cancer",
+    topic="health",
+    potentially_harmful=True,
+    who="lemon",
+    did="cures cancer",
+    where=None,
+    when=None,
+    local_languages=[],
+)
 
 
 def _vote(verdict: Verdict, conf: Confidence = C.HIGH, cited=("E1",), expl="Evidence says no."):
