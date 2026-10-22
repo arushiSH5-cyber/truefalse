@@ -188,7 +188,10 @@ def extract_article(html: str, url: str) -> tuple[str | None, str, str | None]:
     try:
         import trafilatura
 
-        doc = trafilatura.bare_extraction(html, url=url, with_metadata=True)
+        # Precision over recall: menus and reader comments are not the article being checked.
+        doc = trafilatura.bare_extraction(
+            html, url=url, with_metadata=True, favor_precision=True, include_comments=False
+        )
         if doc:
             data = doc if isinstance(doc, dict) else doc.as_dict()
             if data.get("text"):

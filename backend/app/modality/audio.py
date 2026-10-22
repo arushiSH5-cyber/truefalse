@@ -22,15 +22,80 @@ MAX_KEPT_CHUNKS = 8
 
 # Below this, Whisper's own language guess is shaky and the hint may break the tie.
 LOW_LID_CONFIDENCE = 0.5
+SAMPLE_RATE = 16_000
+# Voice notes up to this long get per-utterance language detection (see FasterWhisperSTT).
+PER_UTTERANCE_MAX_S = SHORT_AUDIO_SECONDS
+# Utterances shorter than this are merged with a neighbour: language ID on them is unreliable.
+MIN_UTTERANCE_S = 1.5
+
+Span = tuple[int, int]  # start, end in samples
+
+
+def _decode(path: str) -> Any:
+    from faster_whisper import decode_audio
+
+    return decode_audio(path, sampling_rate=SAMPLE_RATE)
+
+
+def _speech_spans(audio: Any) -> list[Span]:
+    from faster_whisper.vad import VadOptions, get_speech_timestamps
+
+    stamps = get_speech_timestamps(audio, VadOptions(min_silence_duration_ms=300))
+    return [(int(t["start"]), int(t["end"])) for t in stamps]
+
+
+def merge_short(spans: Sequence[Span], min_len: int) -> list[Span]:
+    """Join each span shorter than min_len onto its neighbour."""
+    out: list[Span] = []
+    for s, e in spans:
+        if out and (out[-1][1] - out[-1][0] < min_len or e - s < min_len):
+            out[-1] = (out[-1][0], e)
+        else:
+            out.append((s, e))
+    return out
+
+
+def group_by_language(
+    spans: Sequence[Span], languages: Sequence[str | None], default: str | None
+) -> list[tuple[int, int, str | None]]:
+    """Consecutive spans in the same language become one piece (more context per decode)."""
+    groups: list[tuple[int, int, str | None]] = []
+    for (s, e), lang in zip(spans, languages, strict=True):
+        lang = lang or default
+        if groups and groups[-1][2] == lang:
+            groups[-1] = (groups[-1][0], e, lang)
+        else:
+            groups.append((s, e, lang))
+    return groups
+
+
+def tie_break(
+    language: str | None,
+    confidence: float,
+    ranked: Sequence[tuple[str, float]],
+    hint: str | None,
+) -> tuple[str | None, bool]:
+    """(language, hint_used). The UI-language hint wins only if Whisper is unsure and the hint
+    is among its top three guesses."""
+    hint = (hint or "").split("-")[0].lower() or None
+    if hint and hint != language and confidence < LOW_LID_CONFIDENCE:
+        top = [code for code, _ in sorted(ranked, key=lambda x: -x[1])[:3]]
+        if hint in top:
+            return hint, True
+    return language, False
 
 
 class FasterWhisperSTT:
     """SpeechToText via faster-whisper. Needs the `media` extra.
 
-    The spoken language is always auto-detected, per segment, so code-mixed speech (Hinglish,
-    Taglish, Spanglish...) is not forced into one language. `language_hint` is the platform's UI
-    language, which often differs from the forwarded audio's language, so it is only a
-    tie-breaker: used when Whisper is unsure and the hint is one of its top three guesses.
+    Language is always auto-detected; the platform's UI language (`language_hint`) often differs
+    from a forwarded note's language, so it only breaks a tie (see `tie_break`).
+
+    Code-switching: Whisper decodes a whole 30 s window in one language and silently *translates*
+    speech in any other language (a Spanish+English note came back all Spanish, with "on
+    Monday" turned into "per week"). So voice notes are split at pauses, each utterance's
+    language is detected on its own, and each run of same-language utterances is transcribed
+    in that language. Mixing inside one sentence is still decoded in a single language.
     """
 
     def __init__(
@@ -51,30 +116,43 @@ class FasterWhisperSTT:
             self._model = WhisperModel(size, device=device, compute_type=compute)
         return self._model
 
+    def _pieces(self, model: Any, audio: Any, hint: str | None) -> tuple[str | None, list[Any]]:
+        """(main language, [(start, end, language or None for auto)])."""
+        detected, confidence, ranked = model.detect_language(audio, vad_filter=True)
+        language, forced = tie_break(detected, confidence, ranked, hint)
+        if len(audio) > PER_UTTERANCE_MAX_S * SAMPLE_RATE:
+            # Long audio: Whisper detects per 30 s window by itself (multilingual).
+            return language, [(0, len(audio), language if forced else None)]
+        spans = merge_short(_speech_spans(audio), int(MIN_UTTERANCE_S * SAMPLE_RATE))
+        if len(spans) <= 1:
+            return language, [(0, len(audio), language)]
+        per_span: list[str | None] = []
+        for s, e in spans:
+            lang, p, _ = model.detect_language(audio[s:e])
+            per_span.append(lang if p >= LOW_LID_CONFIDENCE else None)
+        return language, list(group_by_language(spans, per_span, language))
+
     def _run(self, path: str, language_hint: str | None) -> Transcript:
         model = self._load()
-        # No conditioning on earlier text: avoids Whisper's repetition loops on long audio.
-        opts: dict[str, Any] = {
-            "vad_filter": True,
-            "beam_size": 5,
-            "condition_on_previous_text": False,
-        }
-        # Language detection runs here; segments are produced lazily, so a re-run is cheap.
-        segments, info = model.transcribe(path, language=None, multilingual=True, **opts)
-        language: str | None = getattr(info, "language", None)
-        confidence = getattr(info, "language_probability", None) or 0.0
-        hint = (language_hint or "").split("-")[0].lower() or None
-        if hint and hint != language and confidence < LOW_LID_CONFIDENCE:
-            ranked = sorted(getattr(info, "all_language_probs", None) or [], key=lambda x: -x[1])
-            if hint in [code for code, _ in ranked[:3]]:
-                segments, info = model.transcribe(path, language=hint, **opts)
-                language = hint
-        return Transcript(
-            language=language,
-            segments=[
-                TranscriptSegment(start_s=s.start, end_s=s.end, text=s.text) for s in segments
-            ],
-        )
+        audio = _decode(path)
+        language, pieces = self._pieces(model, audio, language_hint)
+        segments: list[TranscriptSegment] = []
+        for start, end, lang in pieces:
+            # No conditioning on earlier text: avoids Whisper's repetition loops on long audio.
+            segs, _ = model.transcribe(
+                audio[start:end],
+                language=lang,
+                multilingual=lang is None,
+                vad_filter=True,
+                beam_size=5,
+                condition_on_previous_text=False,
+            )
+            offset = start / SAMPLE_RATE
+            segments += [
+                TranscriptSegment(start_s=x.start + offset, end_s=x.end + offset, text=x.text)
+                for x in segs
+            ]
+        return Transcript(language=language, segments=segments)
 
     async def transcribe(self, audio_path: str, language_hint: str | None = None) -> Transcript:
         return await asyncio.to_thread(self._run, audio_path, language_hint)

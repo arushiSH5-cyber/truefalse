@@ -6,9 +6,11 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+import pytest
 from PIL import Image, ImageDraw
 
 from app.core.models import Extraction, Part, PartKind, Platform, Submission
+from app.modality import audio as audio_mod
 from app.modality.audio import FasterWhisperSTT
 from app.modality.media import MAX_TILES, image_tiles, temp_workdir
 from app.modality.process import MediaProviders, process_submission
@@ -70,41 +72,92 @@ async def test_tall_screenshot_read_in_one_call_as_slices(tmp_path) -> None:
 
 
 class FakeWhisper:
-    """Stands in for faster_whisper.WhisperModel."""
+    """Stands in for faster_whisper.WhisperModel. `audio` is a list of per-sample language codes,
+    so each slice's "detected" language is simply its majority code."""
 
-    def __init__(self, language: str, probability: float, ranked: list[tuple[str, float]]):
-        self.info = SimpleNamespace(
-            language=language, language_probability=probability, all_language_probs=ranked
+    def __init__(self, probability: float = 0.95, ranked: list[tuple[str, float]] | None = None):
+        self.probability = probability
+        self.ranked = ranked
+        self.transcribed: list[tuple[int, str | None, bool]] = []
+
+    def detect_language(self, audio: list[str], **kw: Any) -> Any:
+        lang = max(set(audio), key=audio.count)
+        return lang, self.probability, self.ranked or [(lang, self.probability)]
+
+    def transcribe(self, audio: list[str], language: str | None = None, **kw: Any) -> Any:
+        self.transcribed.append((len(audio), language, kw["multilingual"]))
+        assert kw["condition_on_previous_text"] is False
+        text = f" <{language or 'auto'}:{len(audio)}>"
+        return iter([SimpleNamespace(start=0.0, end=len(audio) / 16000, text=text)]), None
+
+
+SR = 16000
+
+
+@pytest.fixture
+def fake_audio(monkeypatch):
+    """Install a fake decoded clip (and its speech spans) for FasterWhisperSTT."""
+
+    def install(pieces: list[tuple[str, float]], spans: list[tuple[float, float]] | None = None):
+        audio: list[str] = []
+        for lang, seconds in pieces:
+            audio += [lang] * int(seconds * SR)
+        monkeypatch.setattr(audio_mod, "_decode", lambda path: audio)
+        found = spans or [(0.0, len(audio) / SR)]
+        monkeypatch.setattr(
+            audio_mod, "_speech_spans", lambda a: [(int(s * SR), int(e * SR)) for s, e in found]
         )
-        self.calls: list[dict[str, Any]] = []
+        return audio
 
-    def transcribe(self, path: str, language: str | None = None, **kw: Any) -> Any:
-        self.calls.append({"language": language} | kw)
-        info = self.info if language is None else SimpleNamespace(language=language)
-        return iter([SimpleNamespace(start=0.0, end=2.0, text=" text")]), info
+    return install
 
 
-async def test_whisper_ignores_ui_language_when_confident() -> None:
-    model = FakeWhisper("hi", 0.97, [("hi", 0.97), ("ur", 0.02)])
+async def test_whisper_ignores_ui_language_when_confident(fake_audio) -> None:
+    fake_audio([("hi", 5)])
+    model = FakeWhisper()
     t = await FasterWhisperSTT(model=model).transcribe("x.ogg", "es")  # Spanish phone, Hindi note
-    assert t.language == "hi" and len(model.calls) == 1
-    first = model.calls[0]
-    assert first["language"] is None and first["multilingual"] is True
-    assert first["condition_on_previous_text"] is False
+    assert t.language == "hi" and model.transcribed == [(5 * SR, "hi", False)]
 
 
-async def test_whisper_uses_hint_only_as_tie_breaker() -> None:
-    model = FakeWhisper("ur", 0.41, [("ur", 0.41), ("hi", 0.39), ("pa", 0.1)])
-    t = await FasterWhisperSTT(model=model).transcribe("x.ogg", "hi-IN")
-    assert t.language == "hi" and [c["language"] for c in model.calls] == [None, "hi"]
+async def test_whisper_uses_hint_only_as_tie_breaker(fake_audio) -> None:
+    fake_audio([("ur", 5)])
+    unsure = FakeWhisper(0.41, [("ur", 0.41), ("hi", 0.39), ("pa", 0.1)])
+    t = await FasterWhisperSTT(model=unsure).transcribe("x.ogg", "hi-IN")
+    assert t.language == "hi"
+    t = await FasterWhisperSTT(model=unsure).transcribe("x.ogg", "es")  # not a likely guess
+    assert t.language == "ur"
+    t = await FasterWhisperSTT(model=FakeWhisper(0.41)).transcribe("x.ogg", None)
+    assert t.language == "ur"
 
 
-async def test_whisper_ignores_unlikely_hint_and_no_hint() -> None:
-    model = FakeWhisper("sw", 0.3, [("sw", 0.3), ("en", 0.2), ("so", 0.1), ("es", 0.05)])
-    t = await FasterWhisperSTT(model=model).transcribe("x.ogg", "es")
-    assert t.language == "sw" and len(model.calls) == 1
+async def test_code_switched_note_transcribed_per_language(fake_audio) -> None:
+    # Spanish sentence, pause, English sentence: each must be decoded in its own language,
+    # never translated into the other.
+    fake_audio([("es", 4), ("en", 3)], spans=[(0.0, 2.5), (2.5, 4.0), (4.0, 7.0)])
+    model = FakeWhisper()
     t = await FasterWhisperSTT(model=model).transcribe("x.ogg", None)
-    assert t.language == "sw" and len(model.calls) == 2
+    assert [(lang, multi) for _, lang, multi in model.transcribed] == [
+        ("es", False),
+        ("en", False),
+    ]
+    assert [round(s.start_s, 1) for s in t.segments] == [0.0, 4.0]  # timestamps offset
+    assert "<es:" in t.segments[0].text and "<en:" in t.segments[1].text
+
+
+async def test_long_audio_lets_whisper_detect_per_window(fake_audio) -> None:
+    fake_audio([("es", 200), ("en", 100)])
+    model = FakeWhisper()
+    await FasterWhisperSTT(model=model).transcribe("x.ogg", None)
+    assert model.transcribed == [(300 * SR, None, True)]
+
+
+def test_merge_short_and_group() -> None:
+    from app.modality.audio import group_by_language, merge_short
+
+    assert merge_short([(0, 10), (12, 13), (20, 40), (41, 42)], 5) == [(0, 13), (20, 42)]
+    assert merge_short([(0, 1), (3, 20)], 5) == [(0, 20)]
+    groups = group_by_language([(0, 5), (6, 9), (10, 20)], ["es", None, "en"], "es")
+    assert groups == [(0, 9, "es"), (10, 20, "en")]
 
 
 async def test_speech_language_reaches_claim_extractor(tmp_path) -> None:
@@ -133,3 +186,33 @@ async def test_speech_language_reaches_claim_extractor(tmp_path) -> None:
     await run_check(sub, Deps(llm, [], media=media))
     extract = next(c for c in llm.calls if c["stage"] == "extract")
     assert "<language_id_hint>ta (detected in the media)</language_id_hint>" in extract["user"]
+
+
+def test_real_audio_decode_and_vad(tmp_path) -> None:
+    """Real faster-whisper decoding + VAD on an OGG/Opus voice note (no model download).
+    Catches dependency breaks such as PyAV 19 failing every decode."""
+    import importlib.util
+    import shutil
+    import subprocess
+
+    if not importlib.util.find_spec("faster_whisper") or not shutil.which("ffmpeg"):
+        pytest.skip("needs the media extra and ffmpeg")
+    note = tmp_path / "note.ogg"
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=300:duration=3",
+            "-c:a",
+            "libopus",
+            str(note),
+        ],
+        check=True,
+    )
+    audio = audio_mod._decode(str(note))
+    assert abs(len(audio) / audio_mod.SAMPLE_RATE - 3.0) < 0.2
+    assert isinstance(audio_mod._speech_spans(audio), list)  # a pure tone: no speech is fine
