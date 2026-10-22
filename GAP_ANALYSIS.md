@@ -206,5 +206,26 @@ Each milestone ends with tests, ruff and mypy passing and one or more small comm
 Not done in M1, by design: a human review queue (the flag exists; a queue/export comes with eval or later).
 Not verified: nothing has run against live APIs yet (same as before this branch).
 
+### M2 — Images + audio: done (2026-10-22)
+
+| Item | Status | Where |
+|---|---|---|
+| Whisper no longer forced into the phone's UI language; hint is a tie-breaker only | ✅ | `modality/audio.py::tie_break` |
+| Code-switched voice notes transcribed per utterance (no silent translation) | ✅ verified on real audio | `modality/audio.py::FasterWhisperSTT` |
+| PyAV 19 breaks all audio decoding: pinned `av<19`, real decode test, CI installs `media` | ✅ | `pyproject.toml`, `tests/test_ocr_stt.py` |
+| Tall screenshots read as overlapping slices at legible width | ✅ | `modality/media.py::image_tiles` |
+| Detected speech/image language passed to the claim extractor | ✅ | `pipeline.py::_language_hint` |
+| Article extraction: no menus or reader comments (trafilatura precision mode) | ✅ | `modality/links.py` |
+| Dead code removed (`ProcessedContent`, unused `ImageReader`/`OCRResult`) | ✅ | |
+| Local STT check on your own voice notes | ✅ | `scripts/stt_smoke.py` |
+
+Real-audio results (`small` model, CPU, phone UI language set to Spanish): language right for
+es/fr/pt/id/ja/zh/en and the es+en mix; ~2 s per short note, ~2 min for a 4.5 min clip.
+The `small` model makes word errors on names/numbers ("5G" → "équilibrées", 地震 → 自信,
+大蒜 → 到蒜). For production accuracy use `WHISPER_MODEL=large-v3-turbo` on a GPU, or accept
+these errors (claims are cross-checked against evidence, and users see an "auto-transcribed"
+warning). Not run live: image OCR (needs the Claude API). Mixing inside one sentence (e.g.
+Hinglish) is still decoded in one language: a Whisper limit.
+
 Found while working: `backend/Dockerfile` pins `uv:0.5`, while `uv.lock` (already on `main`) is
 lock revision 5 from a newer uv. Worth bumping the Dockerfile's uv image before the next Docker build.
