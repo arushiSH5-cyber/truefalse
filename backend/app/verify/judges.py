@@ -30,7 +30,7 @@ from app.verify.calibration import (
     Features,
     confidence_for,
 )
-from app.verify.ratings import normalize_rating, polarity
+from app.verify.ratings import polarity, rating_verdict, resolve_ratings
 
 log = get_logger(__name__)
 
@@ -101,7 +101,7 @@ def overall_verdict(judgements: Sequence[ClaimJudgement]) -> tuple[Verdict, Conf
 def factcheck_consensus(verdict: Verdict, cited: Sequence[Evidence]) -> int:
     """+1 if cited fact-check ratings agree with the verdict, -1 if any contradict, 0 if none."""
     target = polarity(verdict)
-    signs = [polarity(normalize_rating(e.rating)) for e in cited if e.rating]
+    signs = [polarity(rating_verdict(e)) for e in cited if e.rating]
     signs = [s for s in signs if s != 0]
     if not signs or target == 0:
         return 0
@@ -110,7 +110,7 @@ def factcheck_consensus(verdict: Verdict, cited: Sequence[Evidence]) -> int:
 
 def evidence_conflict(cited: Sequence[Evidence]) -> bool:
     """True when fact-check ratings among the evidence point in opposite directions."""
-    signs = {polarity(normalize_rating(e.rating)) for e in cited if e.rating} - {0}
+    signs = {polarity(rating_verdict(e)) for e in cited if e.rating} - {0}
     return len(signs) > 1
 
 
@@ -232,7 +232,6 @@ async def judge(
     calibrator: Calibrator | None = None,
 ) -> list[ClaimDecision]:
     calibrator = calibrator or Calibrator.load()
-    by_id = {e.id: e for e in evidence}
     if not evidence:
         return [
             ClaimDecision(
@@ -245,6 +244,8 @@ async def judge(
             for i in range(len(claims))
         ]
 
+    evidence = await resolve_ratings(llm, evidence)
+    by_id = {e.id: e for e in evidence}
     claims_text = "\n".join(f"{i}. [{c.topic}] {c.english}" for i, c in enumerate(claims))
     evidence_text = _evidence_block(evidence)
     outputs = await asyncio.gather(

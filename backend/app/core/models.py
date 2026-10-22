@@ -74,6 +74,13 @@ class Extraction(BaseModel):
     claims: list[Claim]
 
 
+class Verdict(StrEnum):
+    TRUE = "true"
+    MISLEADING = "misleading"
+    FALSE = "false"
+    UNVERIFIED = "unverified"
+
+
 class SourceKind(StrEnum):
     FACTCHECK = "factcheck"
     SEMANTIC_SCHOLAR = "semantic_scholar"
@@ -94,13 +101,9 @@ class EvidenceDraft(BaseModel):
 
 class Evidence(EvidenceDraft):
     id: str
-
-
-class Verdict(StrEnum):
-    TRUE = "true"
-    MISLEADING = "misleading"
-    FALSE = "false"
-    UNVERIFIED = "unverified"
+    # The fact-checker's rating mapped to our scale by the LLM fallback when the keyword table
+    # cannot read it (any language). None means "use the keyword table" or "unknown".
+    rating_verdict: Verdict | None = None
 
 
 class Confidence(StrEnum):
