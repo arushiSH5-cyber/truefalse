@@ -45,6 +45,15 @@ NO_SOURCE_EXPLANATION = (
 DISAGREE_EXPLANATION = (
     "The evidence we found points in different directions, so we cannot give a clear answer."
 )
+JUDGES_FAILED_EXPLANATION = (
+    "We found sources but could not finish checking them, so we cannot give an answer yet. "
+    "Please try again later."
+)
+
+# Why a claim is flagged for human review (machine-readable, also logged as a metric).
+REVIEW_JUDGES_DISAGREE = "judges_disagree"
+REVIEW_FACTCHECK_CONTRADICTS = "factcheck_contradicts"
+REVIEW_TOO_FEW_JUDGES = "too_few_judges"
 
 
 @dataclass(frozen=True)
@@ -139,7 +148,11 @@ def decide(
     verdicts = [v.verdict for v in votes]
 
     def result(
-        judgement: ClaimJudgement, p: float, agreement: float, disagree: bool
+        judgement: ClaimJudgement,
+        p: float,
+        agreement: float,
+        disagree: bool,
+        review: str | None = None,
     ) -> ClaimDecision:
         return ClaimDecision(
             judgement=judgement,
@@ -148,10 +161,15 @@ def decide(
             agreement=round(agreement, 3),
             probability=round(p, 3),
             judges_disagree=disagree,
+            needs_human_review=review is not None,
+            review_reason=review,
         )
 
     if len(votes) < MIN_VALID_JUDGES:
-        return result(_unverified(index), 0.0, 0.0, False)
+        # Evidence exists (judge() handles "no evidence") but the panel could not vote.
+        return result(
+            _unverified(index, JUDGES_FAILED_EXPLANATION), 0.0, 0.0, False, REVIEW_TOO_FEW_JUDGES
+        )
 
     counts = Counter(verdicts)
     majority, n = counts.most_common(1)[0]
@@ -162,7 +180,13 @@ def decide(
     agreement = n / len(votes)
     opposite = Verdict.TRUE in counts and bool(negative)
     if n < 2 or opposite:
-        return result(_unverified(index, DISAGREE_EXPLANATION), 0.0, agreement, True)
+        return result(
+            _unverified(index, DISAGREE_EXPLANATION),
+            0.0,
+            agreement,
+            True,
+            REVIEW_JUDGES_DISAGREE,
+        )
     if majority is Verdict.UNVERIFIED:
         return result(_unverified(index), 0.0, agreement, False)
 
@@ -183,11 +207,13 @@ def decide(
     p = calibrator.predict(features)
     if p < MIN_VERDICT or features.factcheck_consensus < 0:
         explanation = DISAGREE_EXPLANATION if features.factcheck_consensus < 0 else ""
+        contradicts = features.factcheck_consensus < 0
         return result(
             _unverified(index, explanation or NO_SOURCE_EXPLANATION),
             p,
             agreement,
-            features.factcheck_consensus < 0,
+            contradicts,
+            REVIEW_FACTCHECK_CONTRADICTS if contradicts else None,
         )
 
     # Explanation from the most confident agreeing judge (panel order breaks ties).
