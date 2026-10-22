@@ -63,6 +63,19 @@ class Claim(BaseModel):
     potentially_harmful: bool = Field(
         description="True if acting on this claim could hurt someone (e.g. unsafe remedy)"
     )
+    # Structured frame of the claim {who, did, where, when}; null when the message does not say.
+    who: str | None = Field(description="Who or what the claim is about, in English, or null")
+    did: str | None = Field(description="What they did, are, or cause, in English, or null")
+    where: str | None = Field(description="Place the claim is about, in English, or null")
+    when: str | None = Field(description="Date or time period as stated, in English, or null")
+    local_languages: list[str] = Field(
+        description="BCP-47 codes of languages local news/fact-checkers would use for this claim"
+    )
+
+    def frame(self) -> str:
+        """Compact "who | did | where | when" line for prompts and search; skips unknown parts."""
+        parts = [("who", self.who), ("did", self.did), ("where", self.where), ("when", self.when)]
+        return "; ".join(f"{k}: {v}" for k, v in parts if v)
 
 
 class Extraction(BaseModel):

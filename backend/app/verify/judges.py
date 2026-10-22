@@ -246,7 +246,10 @@ async def judge(
 
     evidence = await resolve_ratings(llm, evidence)
     by_id = {e.id: e for e in evidence}
-    claims_text = "\n".join(f"{i}. [{c.topic}] {c.english}" for i, c in enumerate(claims))
+    claims_text = "\n".join(
+        f"{i}. [{c.topic}] {c.english}" + (f"  ({c.frame()})" if c.frame() else "")
+        for i, c in enumerate(claims)
+    )
     evidence_text = _evidence_block(evidence)
     outputs = await asyncio.gather(
         *(_one_judge(llm, spec, claims_text, evidence_text) for spec in panel)
