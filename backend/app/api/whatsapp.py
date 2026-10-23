@@ -7,13 +7,14 @@ from typing import Annotated, Any
 import httpx
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
 
-from app.api.telegram import get_prefs, get_queue
+from app.api.telegram import get_prefs, get_queue, get_translator
 from app.core.config import Settings, get_settings
 from app.core.logging import get_logger
 from app.core.prefs import PrefsStore
 from app.ingestion.base import JobQueue, Messenger
 from app.ingestion.handler import handle_inbound
 from app.ingestion.whatsapp import WhatsAppClient, parse_webhook, verify_signature
+from app.respond.translate import Translator
 
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
 log = get_logger(__name__)
@@ -61,6 +62,7 @@ async def events(
     messenger: Annotated[Messenger, Depends(get_whatsapp)],
     queue: Annotated[JobQueue, Depends(get_queue)],
     prefs: Annotated[PrefsStore, Depends(get_prefs)],
+    translator: Annotated[Translator | None, Depends(get_translator)],
     signature: Annotated[str | None, Header(alias="X-Hub-Signature-256")] = None,
 ) -> dict[str, Any]:
     body = await request.body()  # raw bytes: the signature is over the exact payload
@@ -71,7 +73,7 @@ async def events(
     results = []
     for inbound in parse_webhook(await request.json(), salt):
         try:
-            results.append(await handle_inbound(inbound, messenger, queue, prefs))
+            results.append(await handle_inbound(inbound, messenger, queue, prefs, translator))
         except Exception as exc:  # always 200 so Meta doesn't retry-storm
             log.exception("whatsapp_handle_failed", error=str(exc))
             results.append("error")

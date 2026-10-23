@@ -31,6 +31,7 @@ if TYPE_CHECKING:
     from app.ingestion.base import Messenger
     from app.language.detect import LanguageDetector
     from app.matching.verdict_cache import VerdictCache
+    from app.respond.translate import Translator
     from app.worker import Extras
 
 log = get_logger(__name__)
@@ -280,12 +281,26 @@ def build_extras(settings: Settings, llm: LLMClient) -> "Extras":
 
         voice = GTTSVoice(Path(tempfile.gettempdir()))
         tts, supports = voice, voice.supports
+    fast = llm.with_model(settings.fast_model) if isinstance(llm, AnthropicLLM) else llm
     return Extras(
         prefs=RedisPrefsStore(settings.redis_url),
-        translator=Translator(llm),
+        translator=Translator(fast),
         tts=tts,
         tts_supports=supports,
     )
+
+
+def build_translator(settings: Settings) -> "Translator | None":
+    """Translator for the webhooks' status messages (fast model). None without an API key."""
+    from app.respond.translate import Translator
+
+    api_key = _secret(settings.anthropic_api_key)
+    if not api_key:
+        return None
+    llm = AnthropicLLM(
+        api_key, settings.fast_model, max_retries=1, use_fallbacks=settings.llm_use_fallbacks
+    )
+    return Translator(llm)
 
 
 def build_lid(settings: Settings) -> "LanguageDetector | None":

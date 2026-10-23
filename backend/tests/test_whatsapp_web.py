@@ -10,7 +10,7 @@ import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
 
-from app.api.telegram import get_prefs, get_queue
+from app.api.telegram import get_prefs, get_queue, get_translator
 from app.api.web import get_jobs, get_limiter
 from app.api.whatsapp import get_whatsapp
 from app.core.config import Settings, get_settings
@@ -159,6 +159,7 @@ def env():
             get_whatsapp: lambda: m,
             get_queue: lambda: q,
             get_prefs: lambda: InMemoryPrefsStore(),
+            get_translator: lambda: None,
             get_jobs: lambda: jobs,
             get_limiter: lambda: limiter,
         }

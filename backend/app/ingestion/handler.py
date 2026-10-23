@@ -3,8 +3,9 @@
 from app.core.logging import get_logger
 from app.core.prefs import PrefsStore, UserPrefs
 from app.ingestion.base import Inbound, JobQueue, Messenger
-from app.ingestion.common import TEXT_ONLY, WELCOME, checking_text
+from app.ingestion.common import CHECKING, TEXT_ONLY, WELCOME, say
 from app.language.names import autonym, parse_language_name
+from app.respond.translate import Translator
 
 log = get_logger(__name__)
 
@@ -20,14 +21,22 @@ LANGUAGE_AUTO = (
 
 
 async def handle_inbound(
-    inbound: Inbound, messenger: Messenger, queue: JobQueue, prefs_store: PrefsStore | None = None
+    inbound: Inbound,
+    messenger: Messenger,
+    queue: JobQueue,
+    prefs_store: PrefsStore | None = None,
+    translator: Translator | None = None,
 ) -> str:
     """Returns what happened, for logs and tests."""
     user = inbound.submission.user_hash
     prefs = (await prefs_store.get(user) if prefs_store else None) or UserPrefs(user_hash=user)
+    hint = prefs.reply_language or inbound.submission.language_hint
+
+    async def reply(message: str | dict[str, str]) -> None:
+        await messenger.send_text(inbound.target, await say(message, hint, translator))
 
     if inbound.command in ("start", "help"):
-        await messenger.send_text(inbound.target, WELCOME)
+        await reply(WELCOME)
         if prefs_store and not prefs.welcomed:
             prefs.welcomed = True
             await prefs_store.save(prefs)
@@ -35,17 +44,17 @@ async def handle_inbound(
     if inbound.command == "voice" and prefs_store:
         prefs.voice_replies = not prefs.voice_replies
         await prefs_store.save(prefs)
-        await messenger.send_text(inbound.target, VOICE_ON if prefs.voice_replies else VOICE_OFF)
+        await reply(VOICE_ON if prefs.voice_replies else VOICE_OFF)
         return "voice_toggled"
     if inbound.command == "language" and prefs_store:
         prefs.reply_language = None
         await prefs_store.save(prefs)
-        await messenger.send_text(inbound.target, LANGUAGE_AUTO)
+        await reply(LANGUAGE_AUTO)
         return "language_auto"
     if inbound.command is not None:
         return "ignored_command"
     if inbound.has_unsupported_media:
-        await messenger.send_text(inbound.target, TEXT_ONLY)
+        await reply(TEXT_ONLY)
         return "unsupported_media"
     if not inbound.submission.parts:
         return "empty"
@@ -60,8 +69,7 @@ async def handle_inbound(
             await messenger.send_text(inbound.target, LANGUAGE_SET.format(name=autonym(code)))
             return "language_set"
 
-    hint = prefs.reply_language or inbound.submission.language_hint
-    await messenger.send_text(inbound.target, checking_text(hint))
+    await reply(CHECKING)
     await queue.enqueue(
         CHECK_JOB,
         {
