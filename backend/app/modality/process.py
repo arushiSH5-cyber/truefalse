@@ -9,6 +9,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
+from uuid import uuid4
 
 import httpx
 from pydantic import BaseModel, Field
@@ -33,8 +34,11 @@ from app.modality.links import (
     YtDlpDownloader,
     classify,
     fetch_article,
+    fetch_preview,
+    fetch_thumbnail,
     fetch_x_post,
     find_urls,
+    platform_of,
 )
 from app.modality.media import compress_image, image_tiles, perceptual_hash
 from app.modality.video import Frame, MediaToolError, extract_audio, extract_frames
@@ -99,6 +103,10 @@ W_EDITED = "The picture or video may have been edited."
 W_TRANSCRIBED = "We turned the audio into text automatically, so small mistakes are possible."
 W_MEDIA_FAILED = "We could not open part of what you sent, so we checked only the rest."
 W_UNSUPPORTED = "This kind of file can't be checked on this server yet."
+W_PREVIEW_ONLY = (
+    "We could only see the public preview of this post (its caption and picture), "
+    "not the full video or all of its pictures."
+)
 
 
 async def _remember(path: Path, p: MediaProviders, acc: _Acc) -> None:
@@ -198,21 +206,38 @@ async def _video(path: Path, workdir: Path, p: MediaProviders, acc: _Acc, hint: 
         await _audio(audio, p, acc, "Video audio", hint)
 
 
+async def _media_link(url: str, workdir: Path, p: MediaProviders, acc: _Acc) -> LinkContent | None:
+    """Full media via yt-dlp; if that fails (login wall, blocked server), the public preview."""
+    if p.downloader is not None:
+        try:
+            return await p.downloader.fetch(url, workdir)
+        except Exception as exc:
+            if p.http is None:
+                raise
+            log.info("media_download_failed", platform=platform_of(url), error=type(exc).__name__)
+    if p.http is None:
+        acc.warn(W_UNSUPPORTED)
+        return None
+    content = await fetch_preview(p.http, url)
+    acc.warn(W_PREVIEW_ONLY)
+    return content
+
+
 async def _link(url: str, workdir: Path, p: MediaProviders, acc: _Acc, hint: str | None) -> None:
     kind = classify(url)
-    content: LinkContent
+    content: LinkContent | None
     if kind == "media":
-        if p.downloader is None:
-            acc.warn(W_UNSUPPORTED)
+        content = await _media_link(url, workdir, p, acc)
+        if content is None:
             return
-        content = await p.downloader.fetch(url, workdir)
     elif p.http is None:
         return
     elif kind == "post":
         content = await fetch_x_post(p.http, url)
     else:
         content = await fetch_article(p.http, url)
-    header = f"[Linked {content.kind}{': ' + content.title if content.title else ''}"
+    label = {"preview": "post (preview only)"}.get(content.kind, content.kind)
+    header = f"[Linked {label}{': ' + content.title if content.title else ''}"
     header += f" by {content.uploader}" if content.uploader else ""
     header += f", published {content.published}" if content.published else ""
     acc.texts.append(f"{header}]\n{content.text}".strip())
@@ -222,6 +247,10 @@ async def _link(url: str, workdir: Path, p: MediaProviders, acc: _Acc, hint: str
             await _video(media, workdir, p, acc, hint)
         else:
             await _audio(media, p, acc, "Linked audio", hint)
+    elif content.thumbnail_url and p.http is not None:
+        thumb = await fetch_thumbnail(p.http, content.thumbnail_url, workdir / f"{uuid4().hex}.jpg")
+        if thumb is not None:
+            await _images([thumb], p, acc)
 
 
 async def process_submission(
