@@ -175,6 +175,10 @@ class ComposedReply(BaseModel):
     warnings: list[str]
     safety_note: str | None
     sources_heading: str
+    # Short message to forward to the chat the claim came from; the top source link is added
+    # by code. Empty when composing failed.
+    correction: str = ""
+    forward_heading: str = "Forward this"
 
 
 class CheckReport(BaseModel):
@@ -191,6 +195,8 @@ class CheckReport(BaseModel):
     reply_language: str = "en"
     needs_human_review: bool = False
     review_reasons: list[str] = Field(default_factory=list)
+    correction_text: str = ""  # forwardable correction, with the top source link
+    reply: ComposedReply | None = None  # the translated pieces of reply_text, for the web app
     cached_claims: int = 0  # claims answered from the verdict cache (repeated forwards)
     # AI-content / recycled-media checks: separate from the claim verdict, never changes it.
     ai_report: AIReport = Field(default_factory=AIReport)

@@ -38,7 +38,7 @@ from app.modality.process import (
 )
 from app.research.agent import research
 from app.research.sources.base import Source
-from app.respond.compose import compose, render_text, spoken_text
+from app.respond.compose import compose, correction_text, render_text, spoken_text
 from app.safety import topic_rules
 from app.safety.grounding_check import ground
 from app.verify.judges import PANEL, JudgeSpec, overall_verdict
@@ -358,6 +358,8 @@ async def _run(
         evidence=evidence,
         warnings=warnings,
         reply_text=render_text(reply, overall, sources),
+        correction_text=correction_text(reply, sources),
+        reply=reply,
         reply_language=language,
         spoken_text=spoken_text(reply),
         ai_report=ai_report,

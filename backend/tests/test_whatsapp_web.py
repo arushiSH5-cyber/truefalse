@@ -269,7 +269,7 @@ async def test_web_job_end_to_end_and_card(env) -> None:
     assert await process(payload, Deps(llm, []), messenger, (4, 20)) == "ok"
     rec = await jobs.get(job.id)
     assert rec.status == "done" and rec.result.verdict == "unverified"
-    assert rec.result.verdict_label == "UNVERIFIED"
+    assert rec.result.verdict_label == "Unverified"
     card = client.get(f"/api/check/{job.id}/card.png")
     assert card.status_code == 200 and card.headers["content-type"] == "image/png"
     assert Image.open(io.BytesIO(card.content)).size == (1080, 1080)
