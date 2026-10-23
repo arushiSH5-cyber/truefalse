@@ -191,6 +191,7 @@ class CheckReport(BaseModel):
     reply_language: str = "en"
     needs_human_review: bool = False
     review_reasons: list[str] = Field(default_factory=list)
+    cached_claims: int = 0  # claims answered from the verdict cache (repeated forwards)
     # AI-content / recycled-media checks: separate from the claim verdict, never changes it.
     ai_report: AIReport = Field(default_factory=AIReport)
     spoken_text: str = ""  # short version for voice replies (no links)
