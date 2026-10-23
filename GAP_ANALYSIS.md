@@ -241,7 +241,34 @@ Hinglish) is still decoded in one language: a Whisper limit.
 | Signals combined; users only see strong/corroborated ones; vision-LLM guess is weak | ✅ | `ai_detect/signals.py` |
 
 Watermarks other than C2PA (e.g. SynthID) are not checked: no public detector API.
-CI only runs on pushes to `main` and on pull requests, so this branch has not been through CI yet.
+CI runs on the draft PR (arushiSH5-cyber/truefalse#1).
 
 Found while working: `backend/Dockerfile` pins `uv:0.5`, while `uv.lock` (already on `main`) is
 lock revision 5 from a newer uv. Worth bumping the Dockerfile's uv image before the next Docker build.
+
+### M4 — Platforms + languages: done (2026-10-22)
+
+| Item | Status | Where |
+|---|---|---|
+| Existing Telegram/WhatsApp bots unchanged in behaviour; tests still pass | ✅ | `ingestion/`, `api/` |
+| Instagram/X/YouTube/TikTok/Facebook links: platform detection, URL-shape tests | ✅ | `modality/links.py::platform_of`, `tests/test_platform_links.py` |
+| Public-preview fallback when yt-dlp fails (keyless oEmbed, else `og:` caption + picture; picture is analysed; user told "preview only") | ✅ live-checked: YouTube preview, TikTok via yt-dlp, Instagram/Facebook profile pages | `modality/links.py::fetch_preview`, `modality/process.py::_media_link` |
+| Web app: upload or paste a link | ✅ (already there) + result page shows correction, review flag, AI checks | `web/` |
+| Auto-detect language, reply in it, mixed/romanized, no fixed list | ✅ (already there) | `claims/extract.py`, `language/` |
+| Status/failure/settings messages in any language (table fast path, then cached translator on `FAST_MODEL`, ≤ 3 s wait) | ✅ | `ingestion/common.py::say` |
+| Reply card: verdict, two-line reason, max 3 sources, forwardable correction (+ top link added by code) | ✅ | `prompts/compose.v2.md`, `respond/compose.py` |
+| Web result/share card used the English judge text instead of the translation | ✅ fixed | `core/jobs.py::public_result` |
+| Verdict cache for repeated forwards (claim text + decision + cited sources, 7-day TTL, Redis) | ✅ | `matching/verdict_cache.py`, `pipeline.py` |
+
+Limits worth knowing:
+- Instagram and Facebook *post* pages often show a login wall to servers; then neither yt-dlp
+  nor the preview works and the user gets the "could not open part of what you sent" warning.
+  Meta's official oEmbed needs an app token and no longer returns captions, so it was not added.
+- TikTok's oEmbed now returns only an iframe (no caption or thumbnail); yt-dlp is the path that
+  works for TikTok.
+- The cache matches the same claim text (after normalizing case, punctuation, emoji and
+  spacing) in the original language or in English. Reworded versions of a claim are not
+  matched; the fact-check index's embedding search covers that when it is enabled.
+- Never cached: Unverified verdicts, answers flagged for human review, claims that contain
+  phone numbers, emails, @handles or links.
+- Web page labels (buttons, "Checking…") are still English; the answer itself is translated.
