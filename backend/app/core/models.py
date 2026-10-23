@@ -7,6 +7,8 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
+from app.ai_detect.signals import AIReport
+
 
 class Platform(StrEnum):
     TELEGRAM = "telegram"
@@ -48,11 +50,6 @@ class ReplyTarget(BaseModel):
     reply_to_message_id: str | None = None
 
 
-class ProcessedContent(BaseModel):
-    text: str
-    media_flags: list[str] = Field(default_factory=list)
-
-
 Topic = Literal["health", "superstition", "election", "emergency", "science", "other"]
 
 
@@ -63,6 +60,19 @@ class Claim(BaseModel):
     potentially_harmful: bool = Field(
         description="True if acting on this claim could hurt someone (e.g. unsafe remedy)"
     )
+    # Structured frame of the claim {who, did, where, when}; null when the message does not say.
+    who: str | None = Field(description="Who or what the claim is about, in English, or null")
+    did: str | None = Field(description="What they did, are, or cause, in English, or null")
+    where: str | None = Field(description="Place the claim is about, in English, or null")
+    when: str | None = Field(description="Date or time period as stated, in English, or null")
+    local_languages: list[str] = Field(
+        description="BCP-47 codes of languages local news/fact-checkers would use for this claim"
+    )
+
+    def frame(self) -> str:
+        """Compact "who | did | where | when" line for prompts and search; skips unknown parts."""
+        parts = [("who", self.who), ("did", self.did), ("where", self.where), ("when", self.when)]
+        return "; ".join(f"{k}: {v}" for k, v in parts if v)
 
 
 class Extraction(BaseModel):
@@ -74,11 +84,19 @@ class Extraction(BaseModel):
     claims: list[Claim]
 
 
+class Verdict(StrEnum):
+    TRUE = "true"
+    MISLEADING = "misleading"
+    FALSE = "false"
+    UNVERIFIED = "unverified"
+
+
 class SourceKind(StrEnum):
     FACTCHECK = "factcheck"
     SEMANTIC_SCHOLAR = "semantic_scholar"
     PUBMED = "pubmed"
     WEB = "web"
+    NEWS = "news"
 
 
 class EvidenceDraft(BaseModel):
@@ -94,13 +112,9 @@ class EvidenceDraft(BaseModel):
 
 class Evidence(EvidenceDraft):
     id: str
-
-
-class Verdict(StrEnum):
-    TRUE = "true"
-    MISLEADING = "misleading"
-    FALSE = "false"
-    UNVERIFIED = "unverified"
+    # The fact-checker's rating mapped to our scale by the LLM fallback when the keyword table
+    # cannot read it (any language). None means "use the keyword table" or "unknown".
+    rating_verdict: Verdict | None = None
 
 
 class Confidence(StrEnum):
@@ -126,9 +140,14 @@ class ClaimDecision(BaseModel):
 
     judgement: ClaimJudgement
     votes: list[Verdict]
+    voters: list[str] = Field(default_factory=list)  # model label per vote, same order
     agreement: float
     probability: float  # calibrated probability that the verdict is right
     judges_disagree: bool
+    # Set when the panel disagrees, a cited fact-check contradicts the verdict, or too few judges
+    # could vote. The verdict is then Unverified: we flag for a person, we never guess.
+    needs_human_review: bool = False
+    review_reason: str | None = None
     grounded_ratio: float = 1.0  # share of explanation sentences kept by the grounding check
 
 
@@ -156,6 +175,10 @@ class ComposedReply(BaseModel):
     warnings: list[str]
     safety_note: str | None
     sources_heading: str
+    # Short message to forward to the chat the claim came from; the top source link is added
+    # by code. Empty when composing failed.
+    correction: str = ""
+    forward_heading: str = "Forward this"
 
 
 class CheckReport(BaseModel):
@@ -170,4 +193,11 @@ class CheckReport(BaseModel):
     warnings: list[str]
     reply_text: str
     reply_language: str = "en"
+    needs_human_review: bool = False
+    review_reasons: list[str] = Field(default_factory=list)
+    correction_text: str = ""  # forwardable correction, with the top source link
+    reply: ComposedReply | None = None  # the translated pieces of reply_text, for the web app
+    cached_claims: int = 0  # claims answered from the verdict cache (repeated forwards)
+    # AI-content / recycled-media checks: separate from the claim verdict, never changes it.
+    ai_report: AIReport = Field(default_factory=AIReport)
     spoken_text: str = ""  # short version for voice replies (no links)

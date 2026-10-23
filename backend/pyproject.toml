@@ -35,7 +35,10 @@ ml = [
 ]
 # Speech-to-text, public video/podcast download, article extraction; `uv sync --extra media`
 media = [
-    "faster-whisper>=1.0",
+    "faster-whisper>=1.1",  # multilingual (per-segment) language detection
+    # PyAV 19 dropped the `metadata_errors` argument faster-whisper 1.2 passes; every
+    # audio decode fails with it. Lift once faster-whisper supports PyAV 19.
+    "av<19",
     "yt-dlp>=2024.8.6",
     "trafilatura>=1.12",
 ]
@@ -43,6 +46,22 @@ media = [
 # Fast language-ID pre-check; `uv sync --extra lid` + a fastText model file (LID_MODEL_PATH)
 lid = [
     "fasttext-wheel>=0.9.2",
+]
+# AI-content detection: C2PA Content Credentials; `uv sync --extra ai_detect`
+ai_detect = [
+    "c2pa-python>=0.38",
+]
+# Local AI-image / synthetic-voice classifiers (large: PyTorch); `--extra ai_detect_local`
+ai_detect_local = [
+    "transformers>=4.44",
+    "torch>=2.3",
+]
+# Extra judge providers; `uv sync --extra openai` / `--extra gemini` (see JUDGE_MODELS)
+openai = [
+    "openai>=1.92",
+]
+gemini = [
+    "google-genai>=1.0",
 ]
 # Voice replies; `uv sync --extra voice` (+ ffmpeg)
 voice = [

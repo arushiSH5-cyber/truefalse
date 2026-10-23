@@ -12,7 +12,9 @@ from uuid import uuid4
 from pydantic import BaseModel, Field
 from redis.asyncio import Redis
 
+from app.ai_detect.signals import AISignal
 from app.core.models import CheckReport, Part, ReplyTarget
+from app.respond.compose import MAX_SOURCES
 
 RESULT_TTL_S = 24 * 3600
 UPLOAD_TTL_S = 15 * 60
@@ -35,10 +37,17 @@ class PublicResult(BaseModel):
     confidence: str
     language: str
     reply_text: str
-    explanation: str
+    explanation: str  # in the reply language
+    correction: str = ""  # short message to forward, ends with the top source link
+    confidence_label: str = ""  # e.g. "Confianza: Alta"
+    sources_heading: str = "Sources"
+    forward_heading: str = "Forward this"
     warnings: list[str]
     sources: list[PublicSource]
     claims: list[str]
+    needs_human_review: bool = False
+    ai_overall: str = "no_signal"  # likely_ai | possibly_ai | recycled | edited | no_signal
+    ai_signals: list[AISignal] = Field(default_factory=list)  # all of them, weak ones included
 
 
 class JobRecord(BaseModel):
@@ -52,24 +61,33 @@ def public_result(report: CheckReport) -> PublicResult:
     by_id = {e.id: e for e in report.evidence}
     cited = dict.fromkeys(e for j in report.judgements for e in j.cited_evidence_ids)
     sources = sorted((by_id[i] for i in cited if i in by_id), key=lambda e: e.tier)
+    reply = report.reply
     lead = min(report.judgements, key=lambda j: j.claim_index, default=None)
     first_line = report.reply_text.split("\n", 1)[0]
     label = first_line.split(" ", 1)[1] if " " in first_line else report.overall.value
+    label = reply.verdict_label if reply else label
     return PublicResult(
         verdict=report.overall.value,
         verdict_label=label,
         confidence=report.overall_confidence.value,
         language=report.reply_language,
         reply_text=report.reply_text,
-        explanation=lead.explanation if lead else "",
+        explanation=reply.explanation if reply else (lead.explanation if lead else ""),
+        correction=report.correction_text,
+        confidence_label=reply.confidence_label if reply else "",
+        sources_heading=reply.sources_heading if reply else "Sources",
+        forward_heading=reply.forward_heading if reply else "Forward this",
         warnings=report.warnings,
         sources=[
             PublicSource(
                 title=e.title, url=e.url, publisher=e.publisher, tier=e.tier, published=e.published
             )
-            for e in sources[:6]
+            for e in sources[:MAX_SOURCES]
         ],
         claims=[c.original for c in report.claims],
+        needs_human_review=report.needs_human_review,
+        ai_overall=report.ai_report.overall,
+        ai_signals=report.ai_report.signals,
     )
 
 

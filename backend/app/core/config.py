@@ -20,6 +20,18 @@ class Settings(BaseSettings):
     # LLM
     anthropic_api_key: SecretStr | None = None
     anthropic_model: str = "claude-opus-5-5"
+    # Short, latency-sensitive jobs (translating status messages)
+    fast_model: str = "claude-haiku-5-5"
+    # Judge panel: comma-separated provider:model, one judge each (2-3 recommended).
+    # Providers: anthropic, openai, google. A judge whose key is missing is skipped; with
+    # fewer than 2 usable judges the panel falls back to ANTHROPIC_MODEL with three prompts.
+    judge_models: str = (
+        "anthropic:claude-opus-5-5,anthropic:claude-sonnet-5-5,anthropic:claude-haiku-5-5"
+    )
+    openai_api_key: SecretStr | None = None
+    # Send reasoning_effort to OpenAI (needs a reasoning model); turn off for other models
+    openai_reasoning_effort: bool = True
+    gemini_api_key: SecretStr | None = None
     # Server-side refusal fallback (reroutes a declined request to another model in-call)
     llm_use_fallbacks: bool = True
     # USD per million tokens, for cost metrics only
@@ -46,12 +58,17 @@ class Settings(BaseSettings):
     ncbi_api_key: SecretStr | None = None
     search_provider: Literal["brave", "none"] = "brave"
     search_api_key: SecretStr | None = None
+    # GDELT news search (free, no key, many languages)
+    gdelt_enabled: bool = True
 
     # Fact-check index (Phase 3)
     factcheck_index_enabled: bool = False
     embedding_model: str = "intfloat/multilingual-e5-base"
     # Cosine similarity (E5, normalized) above which an indexed fact-check counts as a match
     match_strong_threshold: float = Field(default=0.88, ge=0, le=1)
+    # Reuse confident verdicts for repeated forwards (Redis; claim text + verdict + sources only)
+    verdict_cache_enabled: bool = True
+    verdict_cache_ttl_days: int = Field(default=7, ge=1, le=90)
 
     # Media (Phase 5). Images and article links work out of the box; voice/video need the
     # `media` extra (faster-whisper, yt-dlp) and ffmpeg.
@@ -59,6 +76,20 @@ class Settings(BaseSettings):
     whisper_model: str = "small"
     max_media_seconds: int = Field(default=3600, gt=0)
     image_hash_db: bool = False  # remember perceptual hashes in Postgres ("seen before")
+
+    # AI-content detection. Content Credentials (needs `--extra ai_detect`) and file metadata
+    # are free and local. The rest send the user's media to a third party: opt in by key.
+    ai_detect_enabled: bool = True
+    sightengine_api_user: str | None = None
+    sightengine_api_secret: SecretStr | None = None
+    hive_api_key: SecretStr | None = None
+    # Local Hugging Face models (`--extra ai_detect_local`); no default, choose and evaluate one
+    ai_image_model: str | None = None
+    ai_voice_model: str | None = None
+    # Reverse image search for recycled photos (Google Cloud Vision web detection)
+    google_vision_api_key: SecretStr | None = None
+    # Weak AI-written-text signal (one extra LLM call per message); never shown to users alone
+    ai_text_signal: bool = False
 
     # Languages (Phase 6)
     lid_model_path: str | None = None  # fastText lid218e.bin / lid.176.bin; needs `lid` extra

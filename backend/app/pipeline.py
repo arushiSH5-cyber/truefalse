@@ -3,6 +3,9 @@
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 
+from app.ai_detect.detector import AIDetector
+from app.ai_detect.signals import AIReport
+from app.ai_detect.text import check_text
 from app.claims.extract import extract_claims
 from app.core.llm import LLMClient
 from app.core.logging import get_logger
@@ -25,6 +28,7 @@ from app.language.detect import LanguageDetector
 from app.language.names import english_name
 from app.language.scripts import is_mixed_script, looks_romanized
 from app.matching.factcheck_index import FactCheckIndex
+from app.matching.verdict_cache import CachedVerdict, VerdictCache, entry_for, reuse
 from app.modality.media import temp_workdir
 from app.modality.process import (
     MediaProviders,
@@ -34,11 +38,11 @@ from app.modality.process import (
 )
 from app.research.agent import research
 from app.research.sources.base import Source
-from app.respond.compose import compose, render_text, spoken_text
+from app.respond.compose import compose, correction_text, render_text, spoken_text
 from app.safety import topic_rules
 from app.safety.grounding_check import ground
+from app.verify.judges import PANEL, JudgeSpec, overall_verdict
 from app.verify.judges import judge as run_judge
-from app.verify.judges import overall_verdict
 
 log = get_logger(__name__)
 
@@ -65,6 +69,12 @@ class Deps:
     index: FactCheckIndex | None = None
     media: MediaProviders | None = None
     lid: LanguageDetector | None = None
+    panel: Sequence[JudgeSpec] = PANEL  # judges; each may run on its own model
+    ai: AIDetector | None = None  # AI-written text signal (media checks run via `media.ai`)
+    verdicts: VerdictCache | None = None  # finished verdicts for repeated forwards
+
+
+W_CACHED = "We checked this same claim on {date}; this answer reuses that check."
 
 
 def seen_before_warnings(processed: ProcessedContent) -> list[str]:
@@ -124,6 +134,88 @@ def _cited_sources(
     return sorted((evidence[i] for i in ids if i in evidence), key=lambda e: e.tier)
 
 
+def _renumber(decision: ClaimDecision, claim_index: int) -> ClaimDecision:
+    judgement = decision.judgement.model_copy(update={"claim_index": claim_index})
+    return decision.model_copy(update={"judgement": judgement})
+
+
+async def cached_verdicts(
+    cache: VerdictCache | None, claims: Sequence[Claim]
+) -> dict[int, CachedVerdict]:
+    if cache is None:
+        return {}
+    out: dict[int, CachedVerdict] = {}
+    for i, claim in enumerate(claims):
+        try:
+            entry = await cache.get(claim)
+        except Exception as exc:  # a cache outage only costs a full check
+            log.warning("verdict_cache_get_failed", error=str(exc))
+            return out
+        if entry is not None:
+            out[i] = entry
+    return out
+
+
+async def store_verdicts(
+    cache: VerdictCache | None,
+    claims: Sequence[Claim],
+    decisions: Sequence[ClaimDecision],
+    evidence: Sequence[Evidence],
+) -> None:
+    if cache is None:
+        return
+    by_id = {e.id: e for e in evidence}
+    for d in decisions:
+        claim = claims[d.judgement.claim_index]
+        entry = entry_for(claim, d, by_id)
+        if entry is None:
+            continue
+        try:
+            await cache.put(claim, entry)
+        except Exception as exc:
+            log.warning("verdict_cache_put_failed", error=str(exc))
+            return
+
+
+async def _check_claims(
+    deps: Deps,
+    claims: Sequence[Claim],
+    language: str,
+    processed: ProcessedContent,
+    trace: RunTrace,
+) -> tuple[list[Evidence], list[ClaimDecision]]:
+    """Match, research, judge and ground claims that have no cached verdict."""
+    cfg = deps.config
+    with trace.timed("match"):
+        matched, n_matched = await match_factchecks(deps.index, claims, cfg)
+    # Pages that show the same picture (reverse image search) are evidence too.
+    seed = matched + processed.evidence_seed
+    # Every claim already has a published fact-check: only a short confirmation search.
+    budget = cfg.research_max_tool_calls
+    if matched and n_matched == len(claims):
+        budget = min(budget, 2)
+    evidence: list[Evidence] = []
+    with trace.timed("research"):
+        try:
+            evidence = await research(
+                deps.llm,
+                deps.sources,
+                claims,
+                language=language,
+                max_tool_calls=budget,
+                time_budget_s=cfg.research_time_budget_s,
+                seed=seed,
+            )
+        except Exception as exc:  # no evidence -> every claim ends Unverified
+            log.warning("research_failed", error=str(exc))
+    by_id = {e.id: e for e in evidence}
+    with trace.timed("verify"):
+        decisions = await run_judge(deps.llm, claims, evidence, panel=deps.panel)
+    with trace.timed("ground"):
+        decisions = await ground(deps.llm, decisions, by_id)
+    return evidence, decisions
+
+
 async def run_check(
     submission: Submission,
     deps: Deps,
@@ -140,15 +232,18 @@ async def run_check(
         current_trace.reset(token)
 
 
-async def _language_hint(deps: Deps, text: str) -> str | None:
+async def _language_hint(deps: Deps, text: str, media_language: str | None) -> str | None:
+    """fastText guess when configured; otherwise the language speech recognition or image
+    reading detected in the media (better than nothing for short or transcribed text)."""
+    media = f"{media_language} (detected in the media)" if media_language else None
     if deps.lid is None or not text.strip():
-        return None
+        return media
     try:
         guess = await deps.lid.detect(text)
     except Exception as exc:
         log.warning("lid_failed", error=str(exc))
-        return None
-    return f"{guess.language} (confidence {guess.confidence:.2f})" if guess else None
+        return media
+    return f"{guess.language} (confidence {guess.confidence:.2f})" if guess else media
 
 
 async def _run(
@@ -169,7 +264,7 @@ async def _run(
                 deps.llm,
                 text,
                 max_claims=cfg.max_claims,
-                language_hint=await _language_hint(deps, text),
+                language_hint=await _language_hint(deps, text, processed.transcript_language),
             )
             own_text = submission_text(submission)  # not our English media labels
             if not extraction.romanized_or_mixed and (
@@ -189,31 +284,23 @@ async def _run(
     evidence: list[Evidence] = []
     judgements: list[ClaimJudgement] = []
     decisions: list[ClaimDecision] = []
+    cached: dict[int, CachedVerdict] = {}
     if extraction.claims:
-        with trace.timed("match"):
-            seed, n_matched = await match_factchecks(deps.index, extraction.claims, cfg)
-        # Every claim already has a published fact-check: only a short confirmation search.
-        budget = cfg.research_max_tool_calls
-        if seed and n_matched == len(extraction.claims):
-            budget = min(budget, 2)
-        with trace.timed("research"):
-            try:
-                evidence = await research(
-                    deps.llm,
-                    deps.sources,
-                    extraction.claims,
-                    language=extraction.language,
-                    max_tool_calls=budget,
-                    time_budget_s=cfg.research_time_budget_s,
-                    seed=seed,
-                )
-            except Exception as exc:  # no evidence -> every claim ends Unverified
-                log.warning("research_failed", error=str(exc))
-        by_id = {e.id: e for e in evidence}
-        with trace.timed("verify"):
-            decisions = await run_judge(deps.llm, extraction.claims, evidence)
-        with trace.timed("ground"):
-            decisions = await ground(deps.llm, decisions, by_id)
+        cached = await cached_verdicts(deps.verdicts, extraction.claims)
+        fresh = [i for i in range(len(extraction.claims)) if i not in cached]
+        fresh_claims = [extraction.claims[i] for i in fresh]
+        if fresh_claims:
+            evidence, decisions = await _check_claims(
+                deps, fresh_claims, extraction.language, processed, trace
+            )
+            # Judges number claims within the list they saw; map back to this check's claims.
+            decisions = [_renumber(d, fresh[d.judgement.claim_index]) for d in decisions]
+            await store_verdicts(deps.verdicts, extraction.claims, decisions, evidence)
+        for i, entry in cached.items():
+            decision, sources = reuse(entry, i)
+            decisions.append(decision)
+            evidence += sources
+        decisions.sort(key=lambda d: d.judgement.claim_index)
         judgements = [d.judgement for d in decisions]
 
     by_id = {e.id: e for e in evidence}
@@ -226,7 +313,16 @@ async def _run(
     warnings = topic_rules.warnings(
         extraction, judgements, by_id, sources_disagree=any(d.judges_disagree for d in decisions)
     )
-    warnings = processed.warnings + seen_before_warnings(processed) + warnings
+    ai_signals = list(processed.ai_signals)
+    if deps.ai and deps.ai.text_signal:
+        ai_signals += await check_text(deps.llm, submission_text(submission))
+    ai_report = AIReport(signals=ai_signals)
+    warnings = (
+        processed.warnings + ai_report.user_warnings() + seen_before_warnings(processed) + warnings
+    )
+    if cached:
+        oldest = min(e.cached_at for e in cached.values())
+        warnings.append(W_CACHED.format(date=oldest.date().isoformat()))
     language = reply_language or extraction.language
     if is_lower_accuracy(extraction.language):
         warnings.append(LOWER_ACCURACY_WARNING.format(language=english_name(extraction.language)))
@@ -262,6 +358,12 @@ async def _run(
         evidence=evidence,
         warnings=warnings,
         reply_text=render_text(reply, overall, sources),
+        correction_text=correction_text(reply, sources),
+        reply=reply,
         reply_language=language,
         spoken_text=spoken_text(reply),
+        ai_report=ai_report,
+        needs_human_review=any(d.needs_human_review for d in decisions),
+        review_reasons=list(dict.fromkeys(d.review_reason for d in decisions if d.review_reason)),
+        cached_claims=len(cached),
     )

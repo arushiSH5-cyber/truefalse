@@ -33,11 +33,12 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           python-version: "3.12"
-      - run: uv sync
+      # media + ai_detect extras: real audio decoding, article extraction and C2PA are tested
+      - run: uv sync --extra media --extra ai_detect
       - name: Lint
         run: uv run ruff check . && uv run ruff format --check .
       - name: Type check
-        run: uv run mypy app scripts
+        run: uv run mypy app scripts eval
       - name: Migrate
         run: uv run alembic upgrade head
       - name: Test (unit + Postgres integration)

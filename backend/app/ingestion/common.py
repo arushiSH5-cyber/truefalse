@@ -1,11 +1,24 @@
 """Helpers shared by all platform adapters."""
 
+import asyncio
 import hashlib
 import hmac
+from typing import TYPE_CHECKING
+
+from app.core.logging import get_logger
+
+if TYPE_CHECKING:
+    from app.respond.translate import Translator
+
+log = get_logger(__name__)
+
+# A status message never waits longer than this for a translation; English is sent instead
+# (the translation is still cached for next time).
+STATUS_TRANSLATE_TIMEOUT_S = 3.0
 
 # Short status strings shown before language detection runs, keyed by the platform's UI
-# language hint. Unknown languages fall back to English; the final answer is always in the
-# language the message was written in.
+# language hint. These are a fast path: other languages are translated by `say`. The final
+# answer is always in the language the message was written in.
 CHECKING = {
     "en": "🔎 Checking… this can take up to a minute.",
     "es": "🔎 Verificando… puede tardar hasta un minuto.",
@@ -63,10 +76,22 @@ def hash_user(salt: str, platform: str, user_id: str) -> str:
     ]
 
 
-def checking_text(language_hint: str | None) -> str:
-    return localized(CHECKING, language_hint)
-
-
-def localized(table: dict[str, str], language_hint: str | None) -> str:
-    base = (language_hint or "en").split("-")[0].lower()
-    return table.get(base, table["en"])
+async def say(
+    message: str | dict[str, str], language: str | None, translator: "Translator | None" = None
+) -> str:
+    """A fixed message in the user's language: a hand-written table entry if there is one,
+    else the cached translator (bounded wait), else English."""
+    base = (language or "en").split("-")[0].lower()
+    if isinstance(message, dict):
+        if base in message:
+            return message[base]
+        message = message["en"]
+    if translator is None or base == "en" or not language:
+        return message
+    task = asyncio.ensure_future(translator.translate(message, language))
+    try:
+        # shield: a timeout leaves the translation running, so it is cached for next time
+        return await asyncio.wait_for(asyncio.shield(task), STATUS_TRANSLATE_TIMEOUT_S)
+    except TimeoutError:
+        log.info("status_translate_slow", language=language)
+        return message
