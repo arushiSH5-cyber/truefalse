@@ -272,3 +272,26 @@ Limits worth knowing:
 - Never cached: Unverified verdicts, answers flagged for human review, claims that contain
   phone numbers, emails, @handles or links.
 - Web page labels (buttons, "Checking…") are still English; the answer itself is translated.
+
+### M5 — Evaluation: done (2026-10-23)
+
+| Item | Status | Where |
+|---|---|---|
+| Eval script comparing `full`, `single_judge`, `lookup_only` | ✅ | `backend/eval/run.py`, `eval/systems.py` |
+| Datasets: X-FACT, MultiClaim, own labeled forwards (+ the 68 built-in items) | ✅ loaders tested on the real X-FACT file and on MultiClaim's documented CSV format | `eval/datasets.py`, `eval/datasets/own_forwards/` |
+| Accuracy, macro-F1, false-alarm rate (+ Unverified rate, cost, latency), per dataset and language | ✅ | `eval/metrics.py` |
+| AI-content detection scored separately | ✅ | `eval/ai_detect.py` |
+| Answer-key hiding (evidence from the item's fact-check site is dropped) | ✅ | `eval/systems.py::HideSite` |
+| Stratified sample, resumable results, cost estimate + confirmation, `--dry-run` | ✅ | `eval/run.py` |
+| Per-language accuracy file for the "less tested language" warning | ✅ now relative to the median language, so a hard benchmark doesn't flag every language | `app/language/accuracy.py` |
+
+**Not run live:** there is no `.env` on this machine, so no real numbers yet. Only the
+dry run and offline tests were run.
+
+Limits worth knowing:
+- MultiClaim has only false/misleading posts, so it can't measure false alarms.
+  It is on Zenodo with access on request.
+- Hiding the source site is a partial guard. Other outlets may republish the same fact-check.
+- The single-judge baseline uses the main model (Opus 5.5). That makes it a strong baseline
+  rather than a weak one.
+
