@@ -138,6 +138,7 @@ async def process(
         grounded_ratio=[d.grounded_ratio for d in report.decisions] if report else [],
         judges_disagree=any(d.judges_disagree for d in report.decisions) if report else False,
         needs_human_review=report.needs_human_review if report else False,
+        cached_claims=report.cached_claims if report else 0,
         review_reasons=report.review_reasons if report else [],
         voters=sorted({v for d in report.decisions for v in d.voters}) if report else [],
         ai_overall=report.ai_report.overall if report else None,
@@ -169,7 +170,7 @@ async def startup(ctx: dict[str, Any]) -> None:
 
 
 async def shutdown(ctx: dict[str, Any]) -> None:
-    closables = [ctx["messenger"], ctx["jobs"], ctx["extras"].prefs]
+    closables = [ctx["messenger"], ctx["jobs"], ctx["extras"].prefs, ctx["deps"].verdicts]
     await asyncio.gather(
         ctx["http"].aclose(),
         *(c.close() for c in closables if hasattr(c, "close")),

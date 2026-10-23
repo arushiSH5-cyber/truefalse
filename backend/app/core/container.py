@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     from app.core.jobs import JobStore
     from app.ingestion.base import Messenger
     from app.language.detect import LanguageDetector
+    from app.matching.verdict_cache import VerdictCache
     from app.worker import Extras
 
 log = get_logger(__name__)
@@ -256,7 +257,16 @@ def build_deps(
         lid=build_lid(settings),
         panel=build_panel(settings, llm),
         ai=build_ai(settings, http) if settings.ai_text_signal else None,
+        verdicts=build_verdict_cache(settings),
     )
+
+
+def build_verdict_cache(settings: Settings) -> "VerdictCache | None":
+    if not settings.verdict_cache_enabled:
+        return None
+    from app.matching.verdict_cache import RedisVerdictCache
+
+    return RedisVerdictCache(settings.redis_url, ttl_s=settings.verdict_cache_ttl_days * 86400)
 
 
 def build_extras(settings: Settings, llm: LLMClient) -> "Extras":

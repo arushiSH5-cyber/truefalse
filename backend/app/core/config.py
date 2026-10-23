@@ -64,6 +64,9 @@ class Settings(BaseSettings):
     embedding_model: str = "intfloat/multilingual-e5-base"
     # Cosine similarity (E5, normalized) above which an indexed fact-check counts as a match
     match_strong_threshold: float = Field(default=0.88, ge=0, le=1)
+    # Reuse confident verdicts for repeated forwards (Redis; claim text + verdict + sources only)
+    verdict_cache_enabled: bool = True
+    verdict_cache_ttl_days: int = Field(default=7, ge=1, le=90)
 
     # Media (Phase 5). Images and article links work out of the box; voice/video need the
     # `media` extra (faster-whisper, yt-dlp) and ffmpeg.
