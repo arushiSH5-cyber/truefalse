@@ -16,7 +16,7 @@ from app.core.prefs import PrefsStore, UserPrefs
 from app.core.queue import redis_settings
 from app.core.trace import RunTrace
 from app.ingestion.base import Messenger
-from app.ingestion.common import FAILURE, WELCOME, WORKING_ON_MEDIA, localized
+from app.ingestion.common import FAILURE, WELCOME, WORKING_ON_MEDIA, say
 from app.ingestion.router import RoutingMessenger
 from app.modality.base import TextToSpeech
 from app.pipeline import Deps, run_check
@@ -74,11 +74,14 @@ async def process(
     with contextlib.suppress(Exception):
         await messenger.send_typing(target)
 
+    # Before the check finishes, the user's language is only known from prefs or the platform.
+    hint = (prefs.reply_language if prefs else None) or submission.language_hint
+
     async def progress(kind: str) -> None:
         if kind == "media":
             with contextlib.suppress(Exception):
                 await messenger.send_text(
-                    target, localized(WORKING_ON_MEDIA, submission.language_hint)
+                    target, await say(WORKING_ON_MEDIA, hint, extras.translator)
                 )
 
     try:
@@ -93,7 +96,8 @@ async def process(
         status = "ok"
     except Exception as exc:
         log.exception("check_failed", error=str(exc))
-        report, text, status = None, FAILURE, "failed"
+        report, status = None, "failed"
+        text = await say(FAILURE, hint, extras.translator)
 
     # First-time users get the welcome, in their language, before their first answer.
     if report and extras.prefs and (prefs is None or not prefs.welcomed):

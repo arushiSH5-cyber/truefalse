@@ -277,3 +277,53 @@ async def test_no_voice_for_unsupported_language_or_text_input(tmp_path) -> None
         )
         assert m.voices == []
     assert tts.calls == []
+
+
+# ---- status messages in any language ------------------------------------------------------
+
+
+class SlowLLM(FakeLLM):
+    async def structured(self, **kw):  # type: ignore[no-untyped-def, override]
+        import asyncio
+
+        await asyncio.sleep(10)
+        return await super().structured(**kw)
+
+
+async def test_status_messages_use_table_then_translator() -> None:
+    from app.ingestion.common import FAILURE, say
+
+    llm = FakeLLM().queue("translate", Translation(text="🔎 Mo n ṣàyẹ̀wò…"))
+    tr = Translator(llm)
+    assert await say(CHECKING, "es-MX", tr) == CHECKING["es"]  # hand-written, no model call
+    assert await say(CHECKING, "yo", tr) == "🔎 Mo n ṣàyẹ̀wò…"
+    assert await say(CHECKING, "yo", tr) == "🔎 Mo n ṣàyẹ̀wò…"  # cached
+    assert len(llm.calls) == 1 and CHECKING["en"] in llm.calls[0]["user"]
+    assert await say(FAILURE, None, tr) == FAILURE
+    assert await say(FAILURE, "yo", None) == FAILURE
+
+
+async def test_slow_translation_falls_back_to_english(monkeypatch) -> None:
+    from app.ingestion import common
+
+    monkeypatch.setattr(common, "STATUS_TRANSLATE_TIMEOUT_S", 0.05)
+    assert await common.say(common.TEXT_ONLY, "yo", Translator(SlowLLM())) == common.TEXT_ONLY
+
+
+async def test_ack_translated_for_language_without_table() -> None:
+    m, q = FakeMessenger(), FakeQueue()
+    tr = Translator(FakeLLM().queue("translate", Translation(text="Mo n ṣàyẹ̀wò")))
+    inbound = parse_update(_update("Ata ń wo àrùn jẹjẹrẹ sàn", lang="yo"), "salt")
+    assert await handle_inbound(inbound, m, q, None, tr) == "queued"
+    assert m.sent[-1][1] == "Mo n ṣàyẹ̀wò"
+
+
+async def test_failure_message_in_users_language() -> None:
+    llm = FakeLLM().queue("extract", LLMError("down"))
+    tr = Translator(FakeLLM().queue("translate", Translation(text="Ma binu, nkan kan ṣẹlẹ̀.")))
+    m = FakeMessenger()
+    sub = _sub("Ata ń wo àrùn jẹjẹrẹ sàn").model_copy(update={"language_hint": "yo"})
+    assert await process(_payload(sub), Deps(llm, []), m, (4, 20), Extras(translator=tr)) == (
+        "failed"
+    )
+    assert m.sent[-1][1] == "Ma binu, nkan kan ṣẹlẹ̀."
