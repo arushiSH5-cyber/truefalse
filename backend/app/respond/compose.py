@@ -26,8 +26,18 @@ EN_LABEL = {
     Verdict.FALSE: "False",
     Verdict.UNVERIFIED: "Unverified",
 }
-MAX_SOURCES = 4
+MAX_SOURCES = 3
+MAX_CORRECTION_CHARS = 400
 TELEGRAM_LIMIT = 4000
+
+
+EN_CORRECTION = {
+    Verdict.TRUE: "I checked this message: it is true.",
+    Verdict.MISLEADING: "I checked this message: it is misleading.",
+    Verdict.FALSE: "I checked this message: it is false.",
+    Verdict.UNVERIFIED: "I checked this message, but it could not be confirmed. "
+    "Please wait before sharing it.",
+}
 
 
 def english_reply(
@@ -44,7 +54,13 @@ def english_reply(
         warnings=list(warnings),
         safety_note=safety_note,
         sources_heading="Sources",
+        correction=f"{EN_CORRECTION[verdict]} {first_sentence(explanation)}".strip(),
     )
+
+
+def first_sentence(text: str) -> str:
+    end = min((i for i in (text.find(". "), text.find("\n")) if i >= 0), default=-1)
+    return text if end < 0 else text[: end + 1].strip()
 
 
 async def compose(
@@ -69,7 +85,7 @@ async def compose(
     try:
         return await llm.structured(
             stage="compose",
-            system=prompts.render("compose.v1"),
+            system=prompts.render("compose.v2"),
             user=prompts.render(
                 "compose_task.v1",
                 language=language,
@@ -85,6 +101,14 @@ async def compose(
         return fallback
 
 
+def correction_text(reply: ComposedReply, sources: Sequence[Evidence]) -> str:
+    """The forwardable message: the model's short correction plus the best source link."""
+    text = reply.correction.strip()[:MAX_CORRECTION_CHARS]
+    if not text:
+        return ""
+    return f"{text}\n{sources[0].url}" if sources else text
+
+
 def render_text(reply: ComposedReply, verdict: Verdict, sources: Sequence[Evidence]) -> str:
     lines = [f"{EMOJI[verdict]} {reply.verdict_label.upper()}", "", reply.explanation, ""]
     lines.append(reply.confidence_label)
@@ -97,6 +121,9 @@ def render_text(reply: ComposedReply, verdict: Verdict, sources: Sequence[Eviden
         for i, s in enumerate(sources[:MAX_SOURCES], 1):
             who = f" ({s.publisher})" if s.publisher else ""
             lines.append(f"{i}. {s.title[:90]}{who}\n{s.url}")
+    correction = correction_text(reply, sources)
+    if correction:
+        lines += ["", f"📤 {reply.forward_heading}:", correction]
     text = "\n".join(lines).strip()
     return text if len(text) <= TELEGRAM_LIMIT else text[: TELEGRAM_LIMIT - 1] + "…"
 
