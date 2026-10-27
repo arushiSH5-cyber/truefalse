@@ -295,3 +295,16 @@ Limits worth knowing:
 - The single-judge baseline uses the main model (Opus 5.5). That makes it a strong baseline
   rather than a weak one.
 
+### Finish: done (2026-10-27)
+
+| Item | Status | Where |
+|---|---|---|
+| README rewrite (status, pipeline, module map, keys, bots, web, AI detection, eval) | ✅ | `README.md` |
+| `.env.example` documents every new key | ✅ (done during M1–M5) | `.env.example` |
+| PROGRESS.md updated; stale "Deferred" list replaced | ✅ | `PROGRESS.md` |
+| Dockerfile uv bumped (0.5 could not read `uv.lock`), `--frozen` | ✅ image builds | `backend/Dockerfile` |
+| `docker compose up` run end to end without keys | ✅ see PROGRESS.md "Finish" | |
+| Worker shutdown hid startup errors behind `KeyError: 'extras'` | ✅ fixed + test | `app/worker.py` |
+
+Still open: a live run with real keys, and eval numbers from it.
+
