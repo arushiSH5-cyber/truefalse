@@ -1,7 +1,7 @@
 from app.core.llm import LLMError
 from app.ingestion.common import FAILURE
 from app.pipeline import Deps
-from app.worker import process
+from app.worker import process, shutdown
 from tests.fakes import FakeLLM, FakeMessenger
 
 
@@ -26,3 +26,16 @@ async def test_success_replies(submission, spanish_health_extraction) -> None:
     status = await process(_payload(submission), Deps(llm, []), messenger, (4.0, 20.0))
     assert status == "ok"
     assert messenger.sent[0][1].startswith("⚪")
+
+
+async def test_shutdown_after_failed_startup_closes_what_exists() -> None:
+    # Startup can stop part-way (e.g. ANTHROPIC_API_KEY missing); shutdown must not hide that.
+    class Closable:
+        closed = False
+
+        async def aclose(self) -> None:
+            self.closed = True
+
+    http = Closable()
+    await shutdown({"http": http})
+    assert http.closed

@@ -1,3 +1,5 @@
+import pytest
+
 from app.core.models import EvidenceDraft, SourceKind
 from app.research.agent import EvidenceStore, build_tools
 from app.research.tiers import tier_for_url
@@ -36,3 +38,33 @@ def test_tiers() -> None:
     assert tier_for_url("https://www.reuters.com/fact-check/x") == 2
     assert tier_for_url("https://randomblog.example.com") == 3
     assert tier_for_url("https://notwho.int.evil.com") == 3
+
+
+@pytest.mark.parametrize(
+    ("url", "tier"),
+    [
+        # Official bodies anywhere, recognized by pattern rather than a country list
+        ("https://sante.gouv.fr/x", 1),
+        ("https://www.minsa.gob.pe/", 1),
+        ("https://www.gov.br/saude", 1),
+        ("https://health.govt.nz/", 1),
+        ("https://www.mhlw.go.jp/", 1),
+        ("https://health.go.ke/", 1),
+        ("https://bag.admin.ch/", 1),
+        ("https://www.salud.gob.ar/", 1),
+        ("https://ec.europa.eu/", 1),
+        ("https://www.rki.de/", 1),
+        # Fact-checkers outside the US/EU/India
+        ("https://dubawa.org/x", 2),
+        ("https://misbar.com/x", 2),
+        ("https://colombiacheck.com/x", 2),
+        ("https://tfc-taiwan.org.tw/x", 2),
+        # Look-alikes stay tier 3
+        ("https://gov.evil.com/", 3),
+        ("https://govt.nz.evil.com/", 3),
+        ("https://example.go.de/", 3),
+        ("https://foo.admin.ru/", 3),
+    ],
+)
+def test_tiers_global(url: str, tier: int) -> None:
+    assert tier_for_url(url) == tier

@@ -10,7 +10,7 @@ import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
 
-from app.api.telegram import get_prefs, get_queue
+from app.api.telegram import get_prefs, get_queue, get_translator
 from app.api.web import get_jobs, get_limiter
 from app.api.whatsapp import get_whatsapp
 from app.core.config import Settings, get_settings
@@ -159,6 +159,7 @@ def env():
             get_whatsapp: lambda: m,
             get_queue: lambda: q,
             get_prefs: lambda: InMemoryPrefsStore(),
+            get_translator: lambda: None,
             get_jobs: lambda: jobs,
             get_limiter: lambda: limiter,
         }
@@ -269,7 +270,7 @@ async def test_web_job_end_to_end_and_card(env) -> None:
     assert await process(payload, Deps(llm, []), messenger, (4, 20)) == "ok"
     rec = await jobs.get(job.id)
     assert rec.status == "done" and rec.result.verdict == "unverified"
-    assert rec.result.verdict_label == "UNVERIFIED"
+    assert rec.result.verdict_label == "Unverified"
     card = client.get(f"/api/check/{job.id}/card.png")
     assert card.status_code == 200 and card.headers["content-type"] == "image/png"
     assert Image.open(io.BytesIO(card.content)).size == (1080, 1080)

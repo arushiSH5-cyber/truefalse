@@ -1,18 +1,19 @@
 """Verification: a panel of independent judges, combined into a calibrated decision.
 
-Each judge sees the same claims + evidence through a different lens (prompt) and must cite
-evidence ids. The core rule is applied to every vote and again to the final decision.
-Disagreement between judges, or weak evidence, ends in "Unverified".
+Each judge is a different LLM (e.g. Claude Opus + Sonnet + Haiku, or Claude + GPT + Gemini) and
+reads the same claims + evidence through its own lens (prompt). Judges must cite evidence ids.
+The core rule is applied to every vote and again to the final decision. Disagreement between
+judges, or weak evidence, ends in "Unverified" and is flagged for human review.
 """
 
 import asyncio
 import json
 from collections import Counter
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from app.core import prompts
-from app.core.llm import Effort, LLMClient
+from app.core.llm import Effort, StructuredLLM
 from app.core.logging import get_logger
 from app.core.models import (
     Claim,
@@ -30,7 +31,7 @@ from app.verify.calibration import (
     Features,
     confidence_for,
 )
-from app.verify.ratings import normalize_rating, polarity
+from app.verify.ratings import polarity, rating_verdict, resolve_ratings
 
 log = get_logger(__name__)
 
@@ -44,6 +45,15 @@ NO_SOURCE_EXPLANATION = (
 DISAGREE_EXPLANATION = (
     "The evidence we found points in different directions, so we cannot give a clear answer."
 )
+JUDGES_FAILED_EXPLANATION = (
+    "We found sources but could not finish checking them, so we cannot give an answer yet. "
+    "Please try again later."
+)
+
+# Why a claim is flagged for human review (machine-readable, also logged as a metric).
+REVIEW_JUDGES_DISAGREE = "judges_disagree"
+REVIEW_FACTCHECK_CONTRADICTS = "factcheck_contradicts"
+REVIEW_TOO_FEW_JUDGES = "too_few_judges"
 
 
 @dataclass(frozen=True)
@@ -51,14 +61,27 @@ class JudgeSpec:
     name: str
     prompt: str
     effort: Effort
+    llm: StructuredLLM | None = None  # None: the pipeline's main LLM
+    model: str = "default"  # "provider:model" label, recorded with each vote
 
 
+# The three lenses. With one LLM this is the whole panel (same model, three prompts).
 PANEL = (
     JudgeSpec("balanced", "judge.v1", "high"),
     JudgeSpec("skeptic", "judge_skeptic.v1", "high"),
     JudgeSpec("context", "judge_context.v1", "medium"),
 )
 MIN_VALID_JUDGES = 2
+
+
+def panel_for(llms: Sequence[tuple[str, StructuredLLM]]) -> tuple[JudgeSpec, ...]:
+    """One judge per (label, llm), each with its own lens so the models also differ in view."""
+    specs = []
+    for i, (label, llm) in enumerate(llms):
+        lens = PANEL[i % len(PANEL)]
+        name = lens.name if i < len(PANEL) else f"{lens.name}{i}"
+        specs.append(replace(lens, name=name, llm=llm, model=label))
+    return tuple(specs)
 
 
 def _unverified(index: int, explanation: str = NO_SOURCE_EXPLANATION) -> ClaimJudgement:
@@ -101,7 +124,7 @@ def overall_verdict(judgements: Sequence[ClaimJudgement]) -> tuple[Verdict, Conf
 def factcheck_consensus(verdict: Verdict, cited: Sequence[Evidence]) -> int:
     """+1 if cited fact-check ratings agree with the verdict, -1 if any contradict, 0 if none."""
     target = polarity(verdict)
-    signs = [polarity(normalize_rating(e.rating)) for e in cited if e.rating]
+    signs = [polarity(rating_verdict(e)) for e in cited if e.rating]
     signs = [s for s in signs if s != 0]
     if not signs or target == 0:
         return 0
@@ -110,7 +133,7 @@ def factcheck_consensus(verdict: Verdict, cited: Sequence[Evidence]) -> int:
 
 def evidence_conflict(cited: Sequence[Evidence]) -> bool:
     """True when fact-check ratings among the evidence point in opposite directions."""
-    signs = {polarity(normalize_rating(e.rating)) for e in cited if e.rating} - {0}
+    signs = {polarity(rating_verdict(e)) for e in cited if e.rating} - {0}
     return len(signs) > 1
 
 
@@ -119,23 +142,34 @@ def decide(
     votes: Sequence[ClaimJudgement],
     evidence: dict[str, Evidence],
     calibrator: Calibrator,
+    voters: Sequence[str] = (),
 ) -> ClaimDecision:
     """Combine one claim's (core-rule-checked) votes into a final decision."""
     verdicts = [v.verdict for v in votes]
 
     def result(
-        judgement: ClaimJudgement, p: float, agreement: float, disagree: bool
+        judgement: ClaimJudgement,
+        p: float,
+        agreement: float,
+        disagree: bool,
+        review: str | None = None,
     ) -> ClaimDecision:
         return ClaimDecision(
             judgement=judgement,
             votes=verdicts,
+            voters=list(voters),
             agreement=round(agreement, 3),
             probability=round(p, 3),
             judges_disagree=disagree,
+            needs_human_review=review is not None,
+            review_reason=review,
         )
 
     if len(votes) < MIN_VALID_JUDGES:
-        return result(_unverified(index), 0.0, 0.0, False)
+        # Evidence exists (judge() handles "no evidence") but the panel could not vote.
+        return result(
+            _unverified(index, JUDGES_FAILED_EXPLANATION), 0.0, 0.0, False, REVIEW_TOO_FEW_JUDGES
+        )
 
     counts = Counter(verdicts)
     majority, n = counts.most_common(1)[0]
@@ -146,7 +180,13 @@ def decide(
     agreement = n / len(votes)
     opposite = Verdict.TRUE in counts and bool(negative)
     if n < 2 or opposite:
-        return result(_unverified(index, DISAGREE_EXPLANATION), 0.0, agreement, True)
+        return result(
+            _unverified(index, DISAGREE_EXPLANATION),
+            0.0,
+            agreement,
+            True,
+            REVIEW_JUDGES_DISAGREE,
+        )
     if majority is Verdict.UNVERIFIED:
         return result(_unverified(index), 0.0, agreement, False)
 
@@ -167,11 +207,13 @@ def decide(
     p = calibrator.predict(features)
     if p < MIN_VERDICT or features.factcheck_consensus < 0:
         explanation = DISAGREE_EXPLANATION if features.factcheck_consensus < 0 else ""
+        contradicts = features.factcheck_consensus < 0
         return result(
             _unverified(index, explanation or NO_SOURCE_EXPLANATION),
             p,
             agreement,
-            features.factcheck_consensus < 0,
+            contradicts,
+            REVIEW_FACTCHECK_CONTRADICTS if contradicts else None,
         )
 
     # Explanation from the most confident agreeing judge (panel order breaks ties).
@@ -207,10 +249,10 @@ def _evidence_block(evidence: Sequence[Evidence]) -> str:
 
 
 async def _one_judge(
-    llm: LLMClient, spec: JudgeSpec, claims_text: str, evidence_text: str
+    llm: StructuredLLM, spec: JudgeSpec, claims_text: str, evidence_text: str
 ) -> list[ClaimJudgement] | None:
     try:
-        out = await llm.structured(
+        out = await (spec.llm or llm).structured(
             stage=f"verify.{spec.name}",
             system=prompts.render(spec.prompt),
             user=prompts.render("judge_task.v1", claims=claims_text, evidence=evidence_text),
@@ -219,12 +261,12 @@ async def _one_judge(
         )
         return out.judgements
     except Exception as exc:  # one judge failing must not sink the panel
-        log.warning("judge_failed", judge=spec.name, error=str(exc))
+        log.warning("judge_failed", judge=spec.name, model=spec.model, error=str(exc))
         return None
 
 
 async def judge(
-    llm: LLMClient,
+    llm: StructuredLLM,
     claims: Sequence[Claim],
     evidence: Sequence[Evidence],
     *,
@@ -232,7 +274,6 @@ async def judge(
     calibrator: Calibrator | None = None,
 ) -> list[ClaimDecision]:
     calibrator = calibrator or Calibrator.load()
-    by_id = {e.id: e for e in evidence}
     if not evidence:
         return [
             ClaimDecision(
@@ -245,7 +286,12 @@ async def judge(
             for i in range(len(claims))
         ]
 
-    claims_text = "\n".join(f"{i}. [{c.topic}] {c.english}" for i, c in enumerate(claims))
+    evidence = await resolve_ratings(llm, evidence)
+    by_id = {e.id: e for e in evidence}
+    claims_text = "\n".join(
+        f"{i}. [{c.topic}] {c.english}" + (f"  ({c.frame()})" if c.frame() else "")
+        for i, c in enumerate(claims)
+    )
     evidence_text = _evidence_block(evidence)
     outputs = await asyncio.gather(
         *(_one_judge(llm, spec, claims_text, evidence_text) for spec in panel)
@@ -254,11 +300,13 @@ async def judge(
     decisions: list[ClaimDecision] = []
     for i in range(len(claims)):
         votes: list[ClaimJudgement] = []
-        for out in outputs:
+        voters: list[str] = []
+        for spec, out in zip(panel, outputs, strict=True):
             if out is None:
                 continue
             mine = next((j for j in out if j.claim_index == i), None)
             if mine is not None:
                 votes.append(enforce_core_rule(mine, by_id))
-        decisions.append(decide(i, votes, by_id, calibrator))
+                voters.append(spec.model)
+        decisions.append(decide(i, votes, by_id, calibrator, voters))
     return decisions

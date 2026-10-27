@@ -10,3 +10,6 @@ node_modules/
 .DS_Store
 *.egg-info/
 dist/
+
+# Eval outputs (may contain dataset text)
+backend/eval/results/

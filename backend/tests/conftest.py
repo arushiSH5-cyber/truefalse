@@ -37,6 +37,11 @@ def spanish_health_extraction() -> Extraction:
                 english="Hot water with lemon cures cancer",
                 topic="health",
                 potentially_harmful=True,
+                who="hot water with lemon",
+                did="cures cancer",
+                where=None,
+                when=None,
+                local_languages=[],
             )
         ],
     )

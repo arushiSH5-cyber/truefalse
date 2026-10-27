@@ -1,0 +1,2 @@
+{"id": "fw001", "language": "hi-Latn", "text": "Garam paani mein nimbu peene se corona khatam ho jaata hai, sabko bhejo", "expected": "false", "acceptable": ["false"], "site": "factly.in", "source": "https://factly.in/..."}
+{"id": "fw002", "language": "es", "text": "La OMS recomienda lavarse las manos con agua y jabón durante al menos 20 segundos.", "expected": "true", "acceptable": ["true"]}
