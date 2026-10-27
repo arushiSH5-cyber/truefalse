@@ -174,10 +174,19 @@ async def startup(ctx: dict[str, Any]) -> None:
 
 
 async def shutdown(ctx: dict[str, Any]) -> None:
-    closables = [ctx["messenger"], ctx["jobs"], ctx["extras"].prefs, ctx["deps"].verdicts]
+    # Startup may have failed part-way (e.g. a missing key); close only what was built,
+    # so the startup error is what gets reported.
+    extras, deps = ctx.get("extras"), ctx.get("deps")
+    closables = [
+        ctx.get("messenger"),
+        ctx.get("jobs"),
+        extras.prefs if extras else None,
+        deps.verdicts if deps else None,
+    ]
+    http = ctx.get("http")
     await asyncio.gather(
-        ctx["http"].aclose(),
-        *(c.close() for c in closables if hasattr(c, "close")),
+        *([http.aclose()] if http else []),
+        *(c.close() for c in closables if c is not None and hasattr(c, "close")),
         return_exceptions=True,
     )
 
