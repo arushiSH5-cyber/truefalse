@@ -7,15 +7,7 @@ from app.core.models import ClaimJudgement, Confidence, Evidence, Extraction, So
 from app.safety import topic_rules
 from app.safety.pii_redact import redact
 
-ALL_PROMPTS = [
-    "claim_extract.v1",
-    "research_agent.v1",
-    "research_task.v1",
-    "judge.v1",
-    "judge_task.v1",
-    "compose.v1",
-    "compose_task.v1",
-]
+ALL_PROMPTS = sorted(p.stem for p in prompts.PROMPTS_DIR.glob("*.v*.md"))
 
 
 @pytest.mark.parametrize("name", ALL_PROMPTS)

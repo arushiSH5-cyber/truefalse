@@ -74,19 +74,55 @@ Repo: https://github.com/arushiSH5-cyber/truefalse
 - **CI**: a new `web` job (npm ci, tsc, lint, build)
 - **Tests**: 196 backend tests passing (WhatsApp parsing/signature/handshake/client, web API validation and rate limit, upload deletion, web job end-to-end, share cards in Latin/Devanagari/Arabic/Han)
 
-## Next: Phase 8, evaluation
+### Proposal upgrade, M1–M5 (2026-10-22 to 2026-10-23)
+Brought the repo in line with the project proposal on the `proposal-upgrade` branch. Details,
+limits and file locations per item are in [GAP_ANALYSIS.md](GAP_ANALYSIS.md) §6.
+- **M1 Text:** claims with who/did/where/when; judges on different models (Opus + Sonnet + Haiku
+  by default, optional OpenAI/Gemini); Brave News + GDELT news search; fact-check lookups in
+  English and the message language guaranteed in code; tier lists as data; `needs_human_review`;
+  fixed a bug where negated ratings ("Unwahr", "No es cierto") were read as True.
+- **M2 Images + audio:** Whisper no longer forced into the phone's language, code-switched voice
+  notes, readable tall screenshots, PyAV pin after a breaking release, dead code removed.
+- **M3 Video + AI content:** scene-cut key frames with per-frame on-screen text; new `ai_detect`
+  package (C2PA, metadata, optional classifiers, reverse image search, weak text signal).
+- **M4 Platforms + languages:** public-preview fallback for Instagram/Facebook/TikTok links,
+  status messages in any language, two-line reason + max 3 sources + forwardable correction,
+  7-day verdict cache for repeated forwards.
+- **M5 Evaluation (was Phase 8):** `backend/eval/run.py` compares full pipeline, single judge and
+  fact-check lookup on X-FACT, MultiClaim and own forwards; AI detection scored separately.
 
-## Deferred (planned in later phases)
-- Opt-in weekly digest (Phase 9; the preference fields already exist)
-- Thumbs up/down, "Report a mistake", review queue (Phase 9)
-- Three-judge panel, calibration, disagreement detection, grounding check (Phase 4)
-- fastText lid-218 as a fast language pre-check (Phase 6)
+### Finish (2026-10-27)
+- README rewritten: current status, pipeline, proposal-module map, API keys, AI detection, eval
+- Docker: the backend image used uv 0.5, which can't read the current `uv.lock`; now uv 0.13 with
+  `--frozen`. The `web` service no longer overwrites the host's `web/node_modules` and `.next`.
+- Worker: if startup fails (e.g. `ANTHROPIC_API_KEY` missing), shutdown no longer hides the real
+  error behind a `KeyError`.
+- **Verified locally with `docker compose up --build`** (no API keys): health and readiness
+  (Postgres + Redis), migrations, web form → `/api/check` → result page polling, the share
+  target redirect, upload type checks, the result page with a sample result (verdict, review
+  flag, correction, sources, AI checks) and the share-card PNG rendered in Docker.
+- 343 backend tests pass (2 skipped), ruff and strict mypy clean, web type-check/lint/build clean.
+
+## Later (not in the proposal)
+- Chrome extension (`extension/` is an empty placeholder)
+- Opt-in weekly digest (the preference fields already exist)
+- Thumbs up/down, "Report a mistake", and a human review queue (the `needs_human_review`
+  flag is set and logged; nothing collects the flagged answers yet)
+- Web app labels ("Check it", "Checking…") are English; the answers themselves are translated
 
 ## Blockers / notes
-- Voice/video/reels need `uv sync --extra media` (faster-whisper, yt-dlp) and have not been run against real downloads; yt-dlp site support changes often, so keep it updated. The SSRF check resolves DNS before httpx connects (a small DNS-rebinding window remains; a pinned-IP transport would close it).
-- The eval dataset labels were written by the authors from public-health sources; get a second reviewer before publishing results.
-- The PWA was verified by type-check, lint and production build, but not yet clicked through against a running backend. Run `docker compose up` (or the backend + `npm run dev`) to try it end to end.
-- **Not yet run against real APIs.** Every external call is tested only against fakes and saved sample responses. The first live run needs `ANTHROPIC_API_KEY` + `TELEGRAM_BOT_TOKEN` (and ideally `GOOGLE_FACTCHECK_API_KEY` and a Brave `SEARCH_API_KEY`).
-- The real E5 model test (`-m ml`) has not been run: it needs `uv sync --extra ml` (PyTorch, ~2 GB). `MATCH_STRONG_THRESHOLD=0.88` is a starting guess; tune it in Phase 8 evaluation.
-- Docker and uv are not installed on the dev Mac, so `docker compose up` has not been run locally. CI covers lint, types and tests on Python 3.12.
-- `uv.lock` is not committed yet. Run `uv lock` once uv is installed.
+- **Not yet run against real APIs.** Every external call is tested only against fakes and saved
+  sample responses. The first live run needs `ANTHROPIC_API_KEY` (and ideally
+  `GOOGLE_FACTCHECK_API_KEY`, a Brave `SEARCH_API_KEY` and a bot token). Without the Anthropic
+  key the worker stops at startup with "ANTHROPIC_API_KEY is not set".
+- No eval numbers yet: run `backend/eval` with keys. The built-in eval labels were written by the
+  authors from public-health sources; get a second reviewer before publishing results.
+- yt-dlp site support changes often; keep it updated. Instagram/Facebook post pages often show a
+  login wall to servers, so those links may only get the preview or fail politely.
+- The SSRF check resolves DNS before httpx connects (a small DNS-rebinding window remains; a
+  pinned-IP transport would close it).
+- The real E5 model test (`-m ml`) has not been run (needs `uv sync --extra ml`, ~2 GB).
+  `MATCH_STRONG_THRESHOLD=0.88` is a starting guess; tune it with the eval.
+- The service worker did not register in the Claude app's built-in browser ("unknown error
+  when fetching the script", although `/sw.js` is served correctly). Check installability once
+  in desktop Chrome or on an Android phone.

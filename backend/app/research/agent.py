@@ -1,9 +1,12 @@
 """Agentic research: the LLM plans queries and calls tiered source tools.
 
+Before the agent runs, code searches the fact-check database for every claim in English and in
+the message's language, so that lookup never depends on the model remembering to do it.
 Every result is stored as Evidence with a stable id (E1, E2, ...) that judges must cite.
 Queries are PII-redacted before they leave the system.
 """
 
+import asyncio
 import json
 from collections.abc import Sequence
 from typing import Any
@@ -37,7 +40,14 @@ TOOL_DESCRIPTIONS = {
         "General web search. Add site: filters to target trusted sources, e.g. "
         "'site:who.int', 'site:reuters.com', 'site:apnews.com', or a national health agency.",
     ),
+    SourceKind.NEWS: (
+        "search_news",
+        "Search recent news coverage from many countries and languages. Use for events, quotes, "
+        "disasters, elections and anything recent. To find local coverage, write the query in "
+        "the local language and pass its language code.",
+    ),
 }
+BASELINE_TIMEOUT_S = 15.0
 
 QUERY_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -100,25 +110,87 @@ def _render_for_model(items: Sequence[Evidence]) -> str:
     )
 
 
-def build_tools(sources: Sequence[Source], store: EvidenceStore) -> list[Tool]:
-    tools: list[Tool] = []
-    for source in sources:
-        name, description = TOOL_DESCRIPTIONS[source.kind]
+async def search_all(
+    sources: Sequence[Source], query: str, language: str | None
+) -> list[EvidenceDraft]:
+    """Query every source of one kind; a failing provider is skipped unless all of them fail."""
+    results = await asyncio.gather(
+        *(s.search(query, language) for s in sources), return_exceptions=True
+    )
+    drafts: list[EvidenceDraft] = []
+    errors: list[BaseException] = []
+    for r in results:
+        if isinstance(r, BaseException):
+            errors.append(r)
+            log.warning("source_failed", error=str(r))
+        else:
+            drafts += r
+    if errors and len(errors) == len(results):
+        raise errors[0]
+    return drafts
 
-        async def handler(args: dict[str, Any], _src: Source = source, _name: str = name) -> str:
+
+def build_tools(sources: Sequence[Source], store: EvidenceStore) -> list[Tool]:
+    """One tool per source kind; a tool with several providers (e.g. news) queries them all."""
+    by_kind: dict[SourceKind, list[Source]] = {}
+    for source in sources:
+        by_kind.setdefault(source.kind, []).append(source)
+    tools: list[Tool] = []
+    for kind, group in by_kind.items():
+        name, description = TOOL_DESCRIPTIONS[kind]
+
+        async def handler(
+            args: dict[str, Any], _group: list[Source] = group, _name: str = name
+        ) -> str:
             query = redact(str(args.get("query", "")))[:300]
             log.info("research_query", tool=_name)
-            drafts = await _src.search(query, args.get("language"))
+            drafts = await search_all(_group, query, args.get("language"))
             return _render_for_model(store.add(drafts))
 
         tools.append(Tool(name, description, QUERY_SCHEMA, handler))
     return tools
 
 
+async def baseline_searches(
+    sources: Sequence[Source], claims: Sequence[Claim], language: str, store: EvidenceStore
+) -> None:
+    """Fact-check lookups for every claim, in English and in the message's own language."""
+    factcheck = [s for s in sources if s.kind is SourceKind.FACTCHECK]
+    if not factcheck:
+        return
+    queries: list[tuple[str, str | None]] = []
+    base = language.split("-")[0].lower()
+    for c in claims:
+        queries.append((c.english, None))  # no language filter: finds reviews in any language
+        if base != "en" and c.original.strip() and c.original.strip() != c.english.strip():
+            queries.append((c.original, base))
+    queries = list(dict.fromkeys((redact(q)[:300], lang) for q, lang in queries))
+    try:
+        async with asyncio.timeout(BASELINE_TIMEOUT_S):
+            results = await asyncio.gather(
+                *(search_all(factcheck, q, lang) for q, lang in queries), return_exceptions=True
+            )
+    except TimeoutError:
+        log.warning("baseline_search_timeout")
+        return
+    for r in results:
+        if isinstance(r, BaseException):
+            log.warning("baseline_search_failed", error=str(r))
+        else:
+            store.add(r)
+    log.info("baseline_searches", queries=len(queries), evidence=len(store.all()))
+
+
 def _claims_block(claims: Sequence[Claim]) -> str:
-    return "\n".join(
-        f"{i}. [{c.topic}] {c.english}  (original: {c.original})" for i, c in enumerate(claims)
-    )
+    lines = []
+    for i, c in enumerate(claims):
+        line = f"{i}. [{c.topic}] {c.english}  (original: {c.original})"
+        if c.frame():
+            line += f"\n   parts: {c.frame()}"
+        if c.local_languages:
+            line += f"\n   local languages: {', '.join(c.local_languages)}"
+        lines.append(line)
+    return "\n".join(lines)
 
 
 async def research(
@@ -132,14 +204,18 @@ async def research(
     seed: Sequence[EvidenceDraft] = (),
 ) -> list[Evidence]:
     store = EvidenceStore()
-    found = store.add(seed)
-    if not sources or max_tool_calls == 0:
+    store.add(seed)
+    if not sources:
         return store.all()
+    await baseline_searches(sources, claims, language, store)
+    if max_tool_calls == 0:
+        return store.all()
+    found = store.all()
     calls = await llm.run_tools(
         stage="research",
-        system=prompts.render("research_agent.v1"),
+        system=prompts.render("research_agent.v2"),
         user=prompts.render(
-            "research_task.v1",
+            "research_task.v2",
             claims=_claims_block(claims),
             language=language,
             already_found=_render_for_model(found) if found else "Nothing yet.",

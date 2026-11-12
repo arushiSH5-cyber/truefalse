@@ -1,6 +1,6 @@
 from fastapi.testclient import TestClient
 
-from app.api.telegram import get_messenger, get_prefs, get_queue
+from app.api.telegram import get_messenger, get_prefs, get_queue, get_translator
 from app.core.config import Settings, get_settings
 from app.core.models import PartKind
 from app.core.prefs import InMemoryPrefsStore
@@ -71,6 +71,7 @@ def _client(messenger: FakeMessenger, queue: FakeQueue) -> TestClient:
     app.dependency_overrides[get_queue] = lambda: queue
     store = InMemoryPrefsStore()
     app.dependency_overrides[get_prefs] = lambda: store
+    app.dependency_overrides[get_translator] = lambda: None
     return TestClient(app)
 
 

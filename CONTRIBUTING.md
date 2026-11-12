@@ -19,7 +19,7 @@ Each pipeline stage is its own module with a small interface:
 | Stage | Module | Interface |
 |---|---|---|
 | Ingestion | `app/ingestion/` | `Messenger`, `JobQueue` (`ingestion/base.py`) |
-| Media processing | `app/modality/` | `SpeechToText`, `ImageReader`, `TextToSpeech` (`modality/base.py`) |
+| Media processing | `app/modality/` | `SpeechToText`, `TextToSpeech` (`modality/base.py`); image reading in `modality/image.py` |
 | LLM | `app/core/llm.py` | `LLMClient` |
 | Research sources | `app/research/sources/` | `Source` (`sources/base.py`) |
 

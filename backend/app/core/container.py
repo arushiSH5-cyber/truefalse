@@ -9,7 +9,7 @@ import httpx
 
 from app.core.config import Settings
 from app.core.db import get_engine
-from app.core.llm import AnthropicLLM, LLMClient
+from app.core.llm import AnthropicLLM, LLMClient, StructuredLLM
 from app.core.logging import get_logger
 from app.core.models import Platform
 from app.matching.factcheck_index import FactCheckIndex, PgFactCheckIndex
@@ -19,14 +19,19 @@ from app.modality.process import MediaFetcher, MediaProviders
 from app.pipeline import Deps, PipelineConfig
 from app.research.sources.base import Source
 from app.research.sources.factcheck_api import GoogleFactCheckSource
+from app.research.sources.news import BraveNewsSource, GdeltNewsSource
 from app.research.sources.pubmed import PubMedSource
 from app.research.sources.semantic_scholar import SemanticScholarSource
 from app.research.sources.web_search import BraveWebSearchSource
+from app.verify.judges import MIN_VALID_JUDGES, PANEL, JudgeSpec, panel_for
 
 if TYPE_CHECKING:
+    from app.ai_detect.detector import AIDetector
     from app.core.jobs import JobStore
     from app.ingestion.base import Messenger
     from app.language.detect import LanguageDetector
+    from app.matching.verdict_cache import VerdictCache
+    from app.respond.translate import Translator
     from app.worker import Extras
 
 log = get_logger(__name__)
@@ -58,8 +63,102 @@ def build_sources(settings: Settings, http: httpx.AsyncClient) -> list[Source]:
     sources.append(PubMedSource(http, _secret(settings.ncbi_api_key)))
     if settings.search_provider == "brave" and (key := _secret(settings.search_api_key)):
         sources.append(BraveWebSearchSource(http, key))
+        sources.append(BraveNewsSource(http, key))
+    if settings.gdelt_enabled:
+        sources.append(GdeltNewsSource(http))
     log.info("sources_enabled", sources=[s.kind.value for s in sources])
     return sources
+
+
+def _judge_llm(
+    settings: Settings, main: AnthropicLLM, provider: str, model: str
+) -> StructuredLLM | None:
+    """One judge's client, or None (logged) if its key or SDK extra is missing."""
+    if provider == "anthropic":
+        return main if model == main.model else main.with_model(model)
+    key_name, extra, module = {
+        "openai": ("OPENAI_API_KEY", "openai", "openai"),
+        "google": ("GEMINI_API_KEY", "gemini", "google.genai"),
+    }[provider]
+    key = _secret(getattr(settings, key_name.lower()))
+    if not key:
+        log.warning("judge_skipped", model=f"{provider}:{model}", reason=f"{key_name} not set")
+        return None
+    if not importlib.util.find_spec(module.split(".")[0]):
+        log.warning("judge_skipped", model=f"{provider}:{model}", reason=f"needs --extra {extra}")
+        return None
+    from app.core.providers import GeminiLLM, OpenAILLM
+
+    if provider == "openai":
+        return OpenAILLM(
+            key,
+            model,
+            max_retries=settings.http_max_retries,
+            send_reasoning_effort=settings.openai_reasoning_effort,
+        )
+    return GeminiLLM(key, model)
+
+
+def build_panel(settings: Settings, main: AnthropicLLM) -> tuple[JudgeSpec, ...]:
+    from app.core.providers import parse_model_specs
+
+    judges: list[tuple[str, StructuredLLM]] = []
+    for provider, model in parse_model_specs(settings.judge_models):
+        llm = _judge_llm(settings, main, provider, model)
+        if llm is not None:
+            judges.append((f"{provider}:{model}", llm))
+    if len(judges) < MIN_VALID_JUDGES:
+        log.warning("judge_panel_single_model", model=main.model)
+        return tuple(
+            JudgeSpec(s.name, s.prompt, s.effort, main, f"anthropic:{main.model}") for s in PANEL
+        )
+    log.info("judge_panel", judges=[label for label, _ in judges])
+    return panel_for(judges)
+
+
+def build_ai(settings: Settings, http: httpx.AsyncClient) -> "AIDetector | None":
+    if not settings.ai_detect_enabled:
+        return None
+    from app.ai_detect.classifiers import (
+        HFAudioClassifier,
+        HFImageClassifier,
+        HiveClassifier,
+        ScoreClassifier,
+        SightengineClassifier,
+    )
+    from app.ai_detect.credentials import ContentCredentialsCheck
+    from app.ai_detect.detector import AIDetector
+    from app.ai_detect.reverse_image import ReverseImageSearch
+
+    frames: list[ScoreClassifier] = []
+    secret = _secret(settings.sightengine_api_secret)
+    if settings.sightengine_api_user and secret:
+        frames.append(SightengineClassifier(http, settings.sightengine_api_user, secret))
+    if key := _secret(settings.hive_api_key):
+        frames.append(HiveClassifier(http, key))
+    local_ml = importlib.util.find_spec("transformers") is not None
+    if settings.ai_image_model and local_ml:
+        frames.append(HFImageClassifier(settings.ai_image_model))
+    voice = (
+        HFAudioClassifier(settings.ai_voice_model) if settings.ai_voice_model and local_ml else None
+    )
+    vision_key = _secret(settings.google_vision_api_key)
+    detector = AIDetector(
+        credentials=ContentCredentialsCheck() if importlib.util.find_spec("c2pa") else None,
+        frame_classifiers=frames,
+        voice_classifier=voice,
+        reverse_search=ReverseImageSearch(http, vision_key) if vision_key else None,
+        text_signal=settings.ai_text_signal,
+    )
+    log.info(
+        "ai_detect_enabled",
+        c2pa=detector.credentials is not None,
+        classifiers=[c.name for c in frames],
+        voice=voice is not None,
+        reverse_image=detector.reverse_search is not None,
+        ai_text=settings.ai_text_signal,
+    )
+    return detector
 
 
 def build_index(settings: Settings) -> FactCheckIndex | None:
@@ -120,7 +219,13 @@ def build_media(
         image_hashes=hashes is not None,
     )
     return MediaProviders(
-        llm=llm, fetcher=fetcher, stt=stt, hashes=hashes, http=http, downloader=downloader
+        llm=llm,
+        fetcher=fetcher,
+        stt=stt,
+        hashes=hashes,
+        http=http,
+        downloader=downloader,
+        ai=build_ai(settings, http),
     )
 
 
@@ -151,7 +256,18 @@ def build_deps(
         index=build_index(settings),
         media=build_media(settings, llm, http, fetcher, fetchers),
         lid=build_lid(settings),
+        panel=build_panel(settings, llm),
+        ai=build_ai(settings, http) if settings.ai_text_signal else None,
+        verdicts=build_verdict_cache(settings),
     )
+
+
+def build_verdict_cache(settings: Settings) -> "VerdictCache | None":
+    if not settings.verdict_cache_enabled:
+        return None
+    from app.matching.verdict_cache import RedisVerdictCache
+
+    return RedisVerdictCache(settings.redis_url, ttl_s=settings.verdict_cache_ttl_days * 86400)
 
 
 def build_extras(settings: Settings, llm: LLMClient) -> "Extras":
@@ -165,12 +281,26 @@ def build_extras(settings: Settings, llm: LLMClient) -> "Extras":
 
         voice = GTTSVoice(Path(tempfile.gettempdir()))
         tts, supports = voice, voice.supports
+    fast = llm.with_model(settings.fast_model) if isinstance(llm, AnthropicLLM) else llm
     return Extras(
         prefs=RedisPrefsStore(settings.redis_url),
-        translator=Translator(llm),
+        translator=Translator(fast),
         tts=tts,
         tts_supports=supports,
     )
+
+
+def build_translator(settings: Settings) -> "Translator | None":
+    """Translator for the webhooks' status messages (fast model). None without an API key."""
+    from app.respond.translate import Translator
+
+    api_key = _secret(settings.anthropic_api_key)
+    if not api_key:
+        return None
+    llm = AnthropicLLM(
+        api_key, settings.fast_model, max_retries=1, use_fallbacks=settings.llm_use_fallbacks
+    )
+    return Translator(llm)
 
 
 def build_lid(settings: Settings) -> "LanguageDetector | None":

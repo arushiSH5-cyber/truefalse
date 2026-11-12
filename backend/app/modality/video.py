@@ -1,11 +1,29 @@
-"""Video: pull the audio track and a few keyframes with ffmpeg (no shell, hard timeouts)."""
+"""Video: pull the audio track and keyframes with ffmpeg (no shell, hard timeouts).
+
+Keyframes are a few evenly spaced frames plus the first frame after each scene cut, so short
+social videos with fast cuts (and the captions on each shot) are covered.
+"""
 
 import asyncio
 import json
+import re
+from dataclasses import dataclass
 from pathlib import Path
 
 FFMPEG_TIMEOUT_S = 120
-MAX_KEYFRAMES = 4
+EVEN_FRAMES = 4
+MAX_KEYFRAMES = 8
+SCENE_THRESHOLD = 0.3
+# Scene detection decodes the whole video; only worth it for short clips.
+SCENE_DETECT_MAX_S = 600.0
+MIN_FRAME_GAP_S = 1.0
+_PTS_TIME = re.compile(r"pts_time:\s*([0-9.]+)")
+
+
+@dataclass(frozen=True)
+class Frame:
+    time_s: float
+    path: Path
 
 
 class MediaToolError(Exception):
@@ -13,6 +31,11 @@ class MediaToolError(Exception):
 
 
 async def run_tool(*args: str, timeout_s: float = FFMPEG_TIMEOUT_S) -> bytes:
+    return (await run_tool_full(*args, timeout_s=timeout_s))[0]
+
+
+async def run_tool_full(*args: str, timeout_s: float = FFMPEG_TIMEOUT_S) -> tuple[bytes, bytes]:
+    """(stdout, stderr). ffmpeg's filter logs (e.g. showinfo) go to stderr."""
     proc = await asyncio.create_subprocess_exec(
         *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
     )
@@ -24,7 +47,7 @@ async def run_tool(*args: str, timeout_s: float = FFMPEG_TIMEOUT_S) -> bytes:
         raise MediaToolError(f"{args[0]} timed out") from None
     if proc.returncode != 0:
         raise MediaToolError(f"{args[0]} failed: {err.decode(errors='replace')[-300:]}")
-    return out
+    return out, err
 
 
 async def probe_duration(path: Path) -> float | None:
@@ -85,12 +108,61 @@ async def extract_audio(video: Path, out_dir: Path, max_seconds: float) -> Path 
     return out
 
 
-async def extract_keyframes(video: Path, out_dir: Path, count: int = MAX_KEYFRAMES) -> list[Path]:
-    """Evenly spaced frames: robust for short social videos where scene detection is noisy."""
+async def scene_times(video: Path, threshold: float = SCENE_THRESHOLD) -> list[float]:
+    """Timestamps of scene cuts (on a small copy of the picture, for speed)."""
+    _, err = await run_tool_full(
+        "ffmpeg",
+        "-nostdin",
+        "-i",
+        str(video),
+        "-an",
+        "-vf",
+        f"scale=320:-2,select='gt(scene,{threshold})',showinfo",
+        "-f",
+        "null",
+        "-",
+    )
+    return [float(t) for t in _PTS_TIME.findall(err.decode(errors="replace"))]
+
+
+def pick_frame_times(
+    duration: float,
+    scenes: list[float],
+    max_frames: int = MAX_KEYFRAMES,
+    even: int = EVEN_FRAMES,
+    min_gap: float = MIN_FRAME_GAP_S,
+) -> list[float]:
+    """Evenly spaced frames, plus a frame just after each scene cut that is not too close to
+    one already picked; at most max_frames, spread over the video."""
+    if duration <= 0:
+        return [0.0]
+    gap = min(min_gap, duration / (2 * even))  # short clips: smaller gap
+    picked = [round(duration * (i + 0.5) / even, 2) for i in range(even)]
+    for cut in sorted(scenes):
+        t = round(min(cut + 0.3, duration - 0.05), 2)
+        if 0 < cut < duration and all(abs(t - p) >= gap for p in picked):
+            picked.append(t)
+    picked.sort()
+    if len(picked) > max_frames:
+        keep = dict.fromkeys(
+            round(i * (len(picked) - 1) / max(max_frames - 1, 1)) for i in range(max_frames)
+        )
+        picked = [picked[i] for i in keep]
+    return picked
+
+
+async def extract_frames(
+    video: Path, out_dir: Path, max_frames: int = MAX_KEYFRAMES
+) -> list[Frame]:
     duration = await probe_duration(video) or 0.0
-    frames: list[Path] = []
-    for i in range(count):
-        t = duration * (i + 0.5) / count if duration else 0.0
+    scenes: list[float] = []
+    if 0 < duration <= SCENE_DETECT_MAX_S:
+        try:
+            scenes = await scene_times(video)
+        except MediaToolError:
+            scenes = []  # even sampling still works
+    frames: list[Frame] = []
+    for i, t in enumerate(pick_frame_times(duration, scenes, max_frames)):
         out = out_dir / f"{video.stem}_frame{i}.jpg"
         try:
             await run_tool(
@@ -111,7 +183,5 @@ async def extract_keyframes(video: Path, out_dir: Path, count: int = MAX_KEYFRAM
         except MediaToolError:
             continue
         if out.exists() and out.stat().st_size > 0:
-            frames.append(out)
-        if not duration:
-            break
+            frames.append(Frame(t, out))
     return frames

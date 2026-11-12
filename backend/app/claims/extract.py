@@ -13,7 +13,7 @@ async def extract_claims(
     hint = f"<language_id_hint>{language_hint}</language_id_hint>\n" if language_hint else ""
     result = await llm.structured(
         stage="extract",
-        system=prompts.render("claim_extract.v1", max_claims=str(max_claims)),
+        system=prompts.render("claim_extract.v2", max_claims=str(max_claims)),
         user=f"{hint}<message>\n{text[:MAX_INPUT_CHARS]}\n</message>",
         output=Extraction,
         effort="low",
@@ -25,5 +25,6 @@ async def extract_claims(
         key = c.english.strip().lower()
         if key and key not in seen:
             seen.add(key)
-            claims.append(c)
+            langs = [x.strip() for x in c.local_languages if x.strip()]
+            claims.append(c.model_copy(update={"local_languages": list(dict.fromkeys(langs))[:4]}))
     return result.model_copy(update={"claims": claims[:max_claims]})

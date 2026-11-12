@@ -29,7 +29,6 @@ from app.modality.hashes import InMemoryImageHashStore
 from app.modality.image import ImageAnalysis
 from app.modality.media import compress_image, hamming, perceptual_hash, temp_workdir
 from app.modality.process import (
-    W_AI,
     W_EDITED,
     W_MEDIA_FAILED,
     W_TRANSCRIBED,
@@ -37,7 +36,7 @@ from app.modality.process import (
     MediaProviders,
     process_submission,
 )
-from app.modality.video import extract_audio, extract_keyframes
+from app.modality.video import extract_audio, extract_frames, pick_frame_times
 from app.pipeline import Deps, run_check
 from tests.fakes import FakeLLM, FakeSource
 
@@ -129,7 +128,11 @@ async def test_image_submission(tmp_path) -> None:
             wd,
         )
     assert "[Text visible in the image]: Limón cura el cáncer" in out.text
-    assert W_EDITED in out.warnings and W_AI in out.warnings
+    assert W_EDITED in out.warnings
+    # The vision model's AI impression alone is a weak signal, not a user warning.
+    assert not any("AI" in w for w in out.warnings)
+    [signal] = out.ai_signals
+    assert signal.detector == "vision_llm" and signal.strength == "weak"
     assert llm.calls[0]["images"] == 1 and len(out.image_hashes) == 1
     assert not fetcher.fetched[0].exists()  # temp dir removed
 
@@ -289,12 +292,24 @@ def sample_video(tmp_path) -> Path:
 async def test_ffmpeg_audio_and_frames(sample_video, tmp_path) -> None:
     wav = await extract_audio(sample_video, tmp_path, max_seconds=60)
     assert wav is not None and wav.stat().st_size > 10_000
-    frames = await extract_keyframes(sample_video, tmp_path, count=3)
-    assert len(frames) == 3 and all(Image.open(f).size == (320, 240) for f in frames)
+    frames = await extract_frames(sample_video, tmp_path, max_frames=3)
+    assert len(frames) == 3 and all(Image.open(f.path).size == (320, 240) for f in frames)
+    assert [f.time_s for f in frames] == sorted(f.time_s for f in frames)
 
 
 async def test_video_submission(sample_video, tmp_path) -> None:
-    llm = FakeLLM().queue("image", _analysis(text_in_image="", description="Test pattern."))
+    from app.modality.image import FrameText, VideoAnalysis
+
+    llm = FakeLLM().queue(
+        "video",
+        VideoAnalysis(
+            on_screen_text=[FrameText(frame=2, text="AJO = CURA"), FrameText(frame=99, text="x")],
+            description="Test pattern.",
+            language="es",
+            possible_editing_signs=[],
+            possibly_ai_generated=False,
+        ),
+    )
     stt = FakeSTT(
         Transcript(
             language="en",
@@ -308,7 +323,20 @@ async def test_video_submission(sample_video, tmp_path) -> None:
     )
     assert "[What the video shows]: Test pattern." in out.text
     assert "Garlic prevents covid." in out.text
-    assert llm.calls[0]["images"] == 4  # keyframes analyzed together in one vision call
+    [call] = llm.calls[:1]
+    assert call["stage"] == "video" and call["images"] >= 4  # one vision call for all keyframes
+    assert "frame 1 at 0:00" in call["user"]
+    assert "[Text on screen in the video, with timestamps]:\n[0:01] AJO = CURA" in out.text
+    assert "x" not in out.text.split("timestamps]:")[1].split("\n")[2:3]  # unknown frame dropped
+
+
+def test_pick_frame_times() -> None:
+    # Even coverage of a 20 s clip, plus a frame just after each cut, at least 1 s apart.
+    times = pick_frame_times(20.0, [3.0, 3.2, 11.0])
+    assert times == [2.5, 3.5, 7.5, 11.3, 12.5, 17.5]
+    assert pick_frame_times(0.0, []) == [0.0]
+    many = pick_frame_times(100.0, [float(t) for t in range(1, 100, 3)], max_frames=8)
+    assert len(many) == 8 and many == sorted(many)
 
 
 # ---- links ---------------------------------------------------------------------------------
@@ -419,3 +447,51 @@ async def test_media_link_without_downloader(tmp_path) -> None:
 async def test_ytdlp_refuses_non_media_hosts(tmp_path) -> None:
     with pytest.raises(links.UnsafeURLError):
         await links.YtDlpDownloader().fetch("https://news.example.com/a", tmp_path)
+
+
+@pytest.fixture
+def cuts_video(tmp_path) -> Path:
+    """Three 2 s shots in different colours: cuts at 2 s and 4 s."""
+    if not HAS_FFMPEG:
+        pytest.skip("ffmpeg not installed")
+    clip = tmp_path / "cuts.mp4"
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-nostdin",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=red:size=320x240:duration=2:rate=10",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=blue:size=320x240:duration=2:rate=10",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=green:size=320x240:duration=2:rate=10",
+            "-filter_complex",
+            "[0:v][1:v][2:v]concat=n=3:v=1:a=0",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            str(clip),
+        ],
+        check=True,
+        capture_output=True,
+    )
+    return clip
+
+
+async def test_scene_cuts_found_on_real_video(cuts_video, tmp_path) -> None:
+    from app.modality.video import scene_times
+
+    clip = cuts_video
+    cuts = await scene_times(clip)
+    assert [round(t) for t in cuts] == [2, 4]
+    frames = await extract_frames(clip, tmp_path)
+    colours = {Image.open(f.path).convert("RGB").getpixel((5, 5)) for f in frames}
+    assert len(colours) == 3  # every shot is represented

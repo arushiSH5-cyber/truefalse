@@ -16,7 +16,7 @@ from app.core.prefs import PrefsStore, UserPrefs
 from app.core.queue import redis_settings
 from app.core.trace import RunTrace
 from app.ingestion.base import Messenger
-from app.ingestion.common import FAILURE, WELCOME, WORKING_ON_MEDIA, localized
+from app.ingestion.common import FAILURE, WELCOME, WORKING_ON_MEDIA, say
 from app.ingestion.router import RoutingMessenger
 from app.modality.base import TextToSpeech
 from app.pipeline import Deps, run_check
@@ -74,11 +74,14 @@ async def process(
     with contextlib.suppress(Exception):
         await messenger.send_typing(target)
 
+    # Before the check finishes, the user's language is only known from prefs or the platform.
+    hint = (prefs.reply_language if prefs else None) or submission.language_hint
+
     async def progress(kind: str) -> None:
         if kind == "media":
             with contextlib.suppress(Exception):
                 await messenger.send_text(
-                    target, localized(WORKING_ON_MEDIA, submission.language_hint)
+                    target, await say(WORKING_ON_MEDIA, hint, extras.translator)
                 )
 
     try:
@@ -93,7 +96,8 @@ async def process(
         status = "ok"
     except Exception as exc:
         log.exception("check_failed", error=str(exc))
-        report, text, status = None, FAILURE, "failed"
+        report, status = None, "failed"
+        text = await say(FAILURE, hint, extras.translator)
 
     # First-time users get the welcome, in their language, before their first answer.
     if report and extras.prefs and (prefs is None or not prefs.welcomed):
@@ -137,6 +141,12 @@ async def process(
         probability=[d.probability for d in report.decisions] if report else [],
         grounded_ratio=[d.grounded_ratio for d in report.decisions] if report else [],
         judges_disagree=any(d.judges_disagree for d in report.decisions) if report else False,
+        needs_human_review=report.needs_human_review if report else False,
+        cached_claims=report.cached_claims if report else 0,
+        review_reasons=report.review_reasons if report else [],
+        voters=sorted({v for d in report.decisions for v in d.voters}) if report else [],
+        ai_overall=report.ai_report.overall if report else None,
+        ai_detectors=sorted({s.detector for s in report.ai_report.signals}) if report else [],
         stages={k: v.model_dump() for k, v in trace.stages.items()},
         cost_usd=trace.cost_usd(*prices),
         voice_reply=voice_sent,
@@ -164,10 +174,19 @@ async def startup(ctx: dict[str, Any]) -> None:
 
 
 async def shutdown(ctx: dict[str, Any]) -> None:
-    closables = [ctx["messenger"], ctx["jobs"], ctx["extras"].prefs]
+    # Startup may have failed part-way (e.g. a missing key); close only what was built,
+    # so the startup error is what gets reported.
+    extras, deps = ctx.get("extras"), ctx.get("deps")
+    closables = [
+        ctx.get("messenger"),
+        ctx.get("jobs"),
+        extras.prefs if extras else None,
+        deps.verdicts if deps else None,
+    ]
+    http = ctx.get("http")
     await asyncio.gather(
-        ctx["http"].aclose(),
-        *(c.close() for c in closables if hasattr(c, "close")),
+        *([http.aclose()] if http else []),
+        *(c.close() for c in closables if c is not None and hasattr(c, "close")),
         return_exceptions=True,
     )
 

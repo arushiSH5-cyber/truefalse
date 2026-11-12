@@ -18,40 +18,94 @@ is *Unverified*.
 
 ## Status
 
-Phases 1–2 are done: the text checker on Telegram works end to end. See [PROGRESS.md](PROGRESS.md)
-for the phase plan and [CONTRIBUTING.md](CONTRIBUTING.md) for how to add providers (voice, OCR, …).
+Everything in the project proposal is built and tested offline (342 backend tests, ruff, strict
+mypy, and a production build of the web app in CI):
+
+- **Inputs:** text, screenshots and memes, voice notes, videos, and links (Instagram, X, YouTube,
+  TikTok, Facebook, articles), on **Telegram**, **WhatsApp** and the **web app**.
+- **Claims:** split into atomic claims with *who / did / where / when*, in any language.
+- **Evidence:** Google Fact Check (ClaimReview from IFCN fact-checkers), news search (Brave News
+  + GDELT), web search, Semantic Scholar and PubMed, plus an optional local fact-check index.
+- **Verdict:** 2–3 judges on **different models** must cite evidence; disagreement gives
+  *Unverified* and a `needs_human_review` flag instead of a guess.
+- **AI-content checks:** Content Credentials (C2PA), file metadata, optional deepfake /
+  synthetic-voice classifiers and reverse image search. Weak signals are never shown alone.
+- **Reply:** verdict, two-line reason, up to 3 sources, and a short correction people can
+  forward, in the user's language. Repeated forwards are answered from a 7-day verdict cache.
+- **Evaluation:** `backend/eval/` compares the full pipeline, a single LLM judge and a
+  fact-check lookup on X-FACT, MultiClaim and your own labeled forwards.
+
+**Not run against the live APIs yet.** Every external service is tested against fakes and saved
+sample responses, so the first run with real keys may surface integration issues. No accuracy
+numbers exist until the eval is run with keys. See [GAP_ANALYSIS.md](GAP_ANALYSIS.md) for the
+proposal-by-proposal status and [PROGRESS.md](PROGRESS.md) for the build history.
 
 ## How a check works
 
 ```
-message ─► detect language + extract claims ─► research agent (tool calls, capped)
-        ─► judge (must cite evidence ids) ─► core rule + safety notes
-        ─► reply in the user's language, with source links added by code
+message / photo / voice / video / link
+  ─► modality: OCR, speech-to-text, key frames + on-screen text, link download or preview
+  ─► AI-content checks (credentials, metadata, optional classifiers, reverse image search)
+  ─► detect language + extract claims (who / did / where / when)
+  ─► verdict cache ─► fact-check index ─► research agent (fact-checks, news, web, papers)
+  ─► judge panel on 2–3 models (must cite evidence ids) ─► calibration + core rule
+  ─► grounding check + safety notes
+  ─► reply in the user's language, with source links added by code
 ```
 
-Research tools: Google Fact Check (ClaimReview), Semantic Scholar, PubMed, and web search (Brave).
-Sources are tiered: 1 = peer-reviewed and official bodies, 2 = news wires and fact-checkers, 3 = other.
+Sources are tiered (`backend/app/research/tiers.json`): 1 = peer-reviewed and official bodies,
+2 = news wires and fact-checkers, 3 = other. Tier-3-only evidence never gets High confidence.
+
+## Proposal modules → code
+
+| Proposal | Code |
+|---|---|
+| `ingest` | `app/ingestion/` (Telegram, WhatsApp, web) + `app/modality/` (image, audio, video, links) |
+| `claims` | `app/claims/` |
+| `retrieval` | `app/matching/` (verdict cache, fact-check index) + `app/research/` (agent and sources) |
+| `verdict` | `app/verify/` (judge panel, ratings, calibration) + `app/safety/` (grounding check) |
+| `ai_detect` | `app/ai_detect/` |
+| `delivery` | `app/respond/` (compose, translate, voice, share card) + `web/` |
+| `eval` | `backend/eval/` |
 
 ## Layout
 
 ```
 backend/app/
-  api/        FastAPI routes, bot webhooks
-  ingestion/  platform adapters -> common Submission model
+  api/        FastAPI routes: health, Telegram + WhatsApp webhooks, web /api/check
+  ingestion/  platform adapters -> common Submission model, localized status messages
   modality/   text, image, audio, video, link processing
+  ai_detect/  C2PA, metadata, classifiers, reverse image search, weak text signal
   claims/     claim extraction + normalization
-  matching/   fact-check index, hybrid search
+  language/   script detection, language switch, per-language accuracy
+  matching/   verdict cache, fact-check index, hybrid search
   research/   research agent + source clients
-  verify/     judge panel, calibration
+  verify/     judge panel, rating normalization, calibration
   safety/     grounding check, topic rules, PII redaction
   respond/    compose, translate, TTS, share cards
-  core/       config, logging, db, queue
+  core/       config, LLM providers, logging, db, queue, jobs
   prompts/    versioned LLM prompts (*.md)
 backend/tests/   unit tests (run offline)
-backend/eval/    benchmark harness
-web/             Next.js PWA (Phase 7)
-extension/       Chrome extension (Phase 9)
+backend/eval/    evaluation harness (see backend/eval/README.md)
+web/             Next.js PWA
 ```
+
+## API keys
+
+All keys go in `.env` (copy `.env.example`; every variable is explained there). Only the first
+one is required; everything else switches a feature on.
+
+| Key | Needed for |
+|---|---|
+| `ANTHROPIC_API_KEY` | **Required.** Claims, research, judges, replies, image reading |
+| `TELEGRAM_BOT_TOKEN` (+ `TELEGRAM_WEBHOOK_SECRET`) | Telegram bot |
+| `WHATSAPP_TOKEN`, `WHATSAPP_PHONE_ID`, `WHATSAPP_APP_SECRET`, `WHATSAPP_VERIFY_TOKEN` | WhatsApp bot |
+| `GOOGLE_FACTCHECK_API_KEY` | Published fact-checks (strongly recommended) |
+| `SEARCH_API_KEY` (Brave) | Web + news search. GDELT news works without a key |
+| `OPENAI_API_KEY`, `GEMINI_API_KEY` | Judges from other vendors (`JUDGE_MODELS`) |
+| `SIGHTENGINE_API_USER`/`_SECRET`, `HIVE_API_KEY` | Deepfake / AI-image classifiers (sends media to a third party) |
+| `GOOGLE_VISION_API_KEY` | Reverse image search for recycled photos |
+| `SEMANTIC_SCHOLAR_API_KEY`, `NCBI_API_KEY` | Higher rate limits only |
 
 ## Quick start (Docker)
 
@@ -62,9 +116,17 @@ curl localhost:8000/health
 curl localhost:8000/health/ready   # checks Postgres + Redis
 ```
 
-Services: `api` (FastAPI on :8000), `worker` (arq), `postgres` (with pgvector), `redis`.
+Services: `api` (FastAPI on :8000), `worker` (arq), `web` (the PWA on :3000), `postgres`
+(with pgvector), `redis`. Open http://localhost:3000 to use the web app.
 
 Database migrations: `docker compose run --rm api alembic upgrade head`
+
+The worker image has no heavy extras by default, so text, photos and article links work but
+voice notes, videos and reels do not. Build it with the media and AI-detection extras:
+
+```bash
+WORKER_EXTRAS="--extra media --extra ai_detect" docker compose build worker
+```
 
 ### Fact-check index (optional)
 
@@ -85,12 +147,15 @@ Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/).
 
 ```bash
 cd backend
-uv sync
-uv run uvicorn app.main:app --reload
-uv run pytest
+uv sync --extra media --extra ai_detect   # same extras as CI; plain `uv sync` also works
+uv run uvicorn app.main:app --reload       # API on :8000 (needs Redis for the web API and bots)
+uv run arq app.worker.WorkerSettings       # worker, in a second terminal
+uv run pytest                              # offline, no keys needed
 uv run ruff check . && uv run ruff format --check .
-uv run mypy app
+uv run mypy app scripts eval
 ```
+
+Voice notes and videos also need `ffmpeg` on the PATH.
 
 ## Try the Telegram bot locally
 
@@ -132,8 +197,40 @@ The PWA is installable. Once installed on Android or ChromeOS, it shows up in th
 - **Any language** works: the claim extractor detects the language (including romanized and code-mixed text), research runs through an English pivot, and replies come back in the user's language and script.
 - **Switch language** by sending just its name, in any language: `Español`, `हिंदी`, `العربية`, `Kiswahili`, `中文`… Send `/language` to go back to auto-detect.
 - **Voice**: a voice note gets a spoken reply. `/voice` turns spoken replies on for every answer. Needs `uv sync --extra voice` and ffmpeg.
+- **Status messages** ("Checking…", errors, settings) come from a small table for common
+  languages and are translated on the fly (fast model, cached) for every other language.
 - **Less-tested languages** get a warning. The list comes from measured accuracy (`app/language/language_accuracy.json`, written by the eval harness) or falls back to a conservative default.
 - Optional fast language-ID pre-check: `uv sync --extra lid` and set `LID_MODEL_PATH` to a fastText model (e.g. NLLB's `lid218e.bin`).
+
+## AI-content detection
+
+Runs on photos, video frames and audio before the claims are checked (`app/ai_detect/`).
+
+- **Free, local, on by default:** C2PA Content Credentials (`uv sync --extra ai_detect`) and
+  file metadata (IPTC "trained algorithmic media", EXIF generator tags, Stable Diffusion /
+  ComfyUI parameters). Messaging apps usually strip both, so they help most with web uploads.
+- **Optional, by key:** Sightengine or Hive deepfake / AI-image classifiers, Google Cloud Vision
+  reverse image search (finds older copies of a "new" photo), and local Hugging Face image or
+  synthetic-voice models (`AI_IMAGE_MODEL`, `AI_VOICE_MODEL`).
+- **Weak only:** the vision model's own guess and the optional AI-written-text signal
+  (`AI_TEXT_SIGNAL`) are logged and combined, but never shown to users on their own.
+
+Missing credentials are reported as "no information", never as proof that something is real.
+Invisible watermarks other than C2PA (such as SynthID) are not checked: there is no public
+detector for them.
+
+## Evaluation
+
+```bash
+cd backend
+uv run python -m eval.run --dataset builtin --dry-run        # no API calls
+uv run python -m eval.run --dataset builtin --dataset own --limit 50
+```
+
+Compares `full` (the pipeline), `single_judge` (one LLM, no search) and `lookup_only`
+(fact-check database only) on accuracy, macro-F1 and false-alarm rate, per dataset and per
+language. It prints a cost estimate and asks before spending money. Datasets, options and the
+separate AI-detection scorer are described in [backend/eval/README.md](backend/eval/README.md).
 
 ## Engineering rules
 
