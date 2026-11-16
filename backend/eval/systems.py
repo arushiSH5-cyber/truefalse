@@ -15,7 +15,7 @@ from collections import Counter
 from collections.abc import Sequence
 from typing import Protocol
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.core import prompts
 from app.core.llm import StructuredLLM
@@ -31,11 +31,20 @@ from eval.datasets import EvalItem
 LOOKUP_QUERY_CHARS = 300
 
 
+class CalibrationPoint(BaseModel):
+    """One claim decision's calibration inputs, so `--fit-calibrator` can refit the model."""
+
+    verdict: Verdict
+    probability: float
+    features: dict[str, float]
+
+
 class Prediction(BaseModel):
     system: str
     item_id: str
     verdict: Verdict
     needs_human_review: bool = False
+    calibration: list[CalibrationPoint] = Field(default_factory=list)
     cost_usd: float = 0.0
     latency_s: float = 0.0
     error: str | None = None
@@ -107,6 +116,13 @@ class FullSystem:
             item_id=item.id,
             verdict=report.overall,
             needs_human_review=report.needs_human_review,
+            calibration=[
+                CalibrationPoint(
+                    verdict=d.calibrated_verdict, probability=d.probability, features=d.features
+                )
+                for d in report.decisions
+                if d.features and d.calibrated_verdict
+            ],
             cost_usd=trace.cost_usd(*self._prices),
             latency_s=round(time.monotonic() - start, 2),
         )
