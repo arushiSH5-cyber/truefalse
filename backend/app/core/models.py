@@ -149,6 +149,8 @@ class ClaimDecision(BaseModel):
     needs_human_review: bool = False
     review_reason: str | None = None
     grounded_ratio: float = 1.0  # share of explanation sentences kept by the grounding check
+    features: dict[str, float] | None = None  # calibration inputs (eval refits the calibrator)
+    calibrated_verdict: Verdict | None = None  # the panel majority `probability` is about
 
 
 class GroundedSentence(BaseModel):

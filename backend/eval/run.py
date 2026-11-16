@@ -4,7 +4,7 @@ Usage (from backend/):
   uv run python -m eval.run --dataset builtin --dry-run              # harness check, no API calls
   uv run python -m eval.run --dataset builtin --dataset own --limit 50
   uv run python -m eval.run --dataset xfact:~/x-fact/data/x-fact/test.all.tsv --limit 300 \
-      --systems full,single_judge,lookup_only --write-language-accuracy
+      --systems full,single_judge,lookup_only --write-language-accuracy --fit-calibrator
   uv run python -m eval.run --report-only --out eval/results/my-run
 
 Results go to `--out` (default eval/results/<timestamp>): `items.jsonl`, `predictions.jsonl`
@@ -26,6 +26,9 @@ from pydantic import BaseModel
 
 from app.core.models import Verdict
 from app.language.accuracy import ACCURACY_PATH, MIN_EXAMPLES, LanguageStats
+from app.verify.calibration import PARAMS_PATH
+from eval.calibrate import MIN_POINTS as CAL_MIN_POINTS
+from eval.calibrate import fit as fit_calibrator
 from eval.datasets import EvalItem, dedupe, load, stratified_sample
 from eval.metrics import Scores, grouped, score
 from eval.systems import Prediction, System
@@ -229,6 +232,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         action="store_true",
         help=f"write per-language macro-F1 of `full` to {ACCURACY_PATH.name}",
     )
+    ap.add_argument(
+        "--fit-calibrator",
+        action="store_true",
+        help=f"refit confidence calibration on `full` results and write {PARAMS_PATH.name}",
+    )
     args = ap.parse_args(argv)
 
     names = [s.strip() for s in args.systems.split(",") if s.strip()]
@@ -274,6 +282,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         ACCURACY_PATH.write_text(json.dumps(data, indent=1) + "\n")
         enough = sum(1 for s in stats.values() if s.n >= MIN_EXAMPLES)
         print(f"Wrote {ACCURACY_PATH} ({enough} languages with >= {MIN_EXAMPLES} examples).")
+    if args.fit_calibrator and "full" in names and not args.dry_run:
+        result = fit_calibrator(items, read_predictions(out / "predictions.jsonl"))
+        print(
+            f"Calibration: {result.n} single-claim decisions, {result.accuracy:.0%} right, "
+            f"ECE {result.ece_before:.3f} -> {result.ece_after:.3f}"
+        )
+        if result.calibrator is None:
+            print(f"Not enough data (need {CAL_MIN_POINTS}); kept the current weights.")
+        else:
+            result.calibrator.save(PARAMS_PATH)
+            print(f"Wrote {PARAMS_PATH}.")
     return 0
 
 

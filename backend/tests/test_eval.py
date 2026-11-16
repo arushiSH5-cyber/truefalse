@@ -29,6 +29,7 @@ from eval.datasets import (
 )
 from eval.metrics import score
 from eval.systems import (
+    CalibrationPoint,
     FullSystem,
     LookupOnlySystem,
     Prediction,
@@ -283,3 +284,66 @@ async def test_ai_detect_scorer(tmp_path) -> None:
     assert rep["recall"] == 0.5 and rep["precision"] == 0.5
     assert rep["false_alarm_rate"] == 1 / 3
     assert rep["detectors"]["c2pa"]["on_ai"] == 1 and rep["detectors"]["c2pa"]["on_real"] == 1
+
+
+def _cal_point(agreement: float, tier: int, verdict: Verdict) -> CalibrationPoint:
+    return CalibrationPoint(
+        verdict=verdict,
+        probability=0.7,
+        features={
+            "agreement": agreement,
+            "best_tier": tier,
+            "n_sources": 2,
+            "factcheck_consensus": 0,
+            "judge_confidence": 0.66,
+        },
+    )
+
+
+def test_fit_calibrator_learns_from_full_results() -> None:
+    from eval.calibrate import MIN_POINTS, fit
+
+    items, preds = [], {}
+    for i in range(40):
+        unanimous = i % 2 == 0
+        item = EvalItem(id=f"c{i}", dataset="t", language="en", text="x", expected=Verdict.FALSE)
+        # Unanimous tier-1 panels are right; split tier-3 panels are wrong.
+        verdict = Verdict.FALSE if unanimous else Verdict.TRUE
+        point = _cal_point(1.0 if unanimous else 0.67, 1 if unanimous else 3, verdict)
+        items.append(item)
+        preds[("full", item.id)] = Prediction(
+            system="full", item_id=item.id, verdict=verdict, calibration=[point]
+        )
+    result = fit(items, preds)
+    assert result.n == 40 and result.calibrator is not None
+    assert result.ece_after < result.ece_before
+    # Too little data: keep the priors.
+    small = fit(items[: MIN_POINTS - 1], preds)
+    assert small.calibrator is None
+
+
+def test_decisions_carry_calibration_features() -> None:
+    from app.verify.calibration import Calibrator
+    from app.verify.judges import decide
+
+    ev = {
+        "E1": Evidence(
+            id="E1",
+            source=SourceKind.FACTCHECK,
+            title="t",
+            url="https://who.int/x",
+            snippet="s",
+            quote="q",
+            tier=1,
+        )
+    }
+    vote = ClaimJudgement(
+        claim_index=0,
+        verdict=Verdict.FALSE,
+        confidence=Confidence.HIGH,
+        explanation="e",
+        cited_evidence_ids=["E1"],
+    )
+    d = decide(0, [vote, vote, vote], ev, Calibrator())
+    assert d.features and d.features["best_tier"] == 1
+    assert d.calibrated_verdict is Verdict.FALSE

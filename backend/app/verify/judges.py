@@ -10,7 +10,7 @@ import asyncio
 import json
 from collections import Counter
 from collections.abc import Sequence
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
 
 from app.core import prompts
 from app.core.llm import Effort, StructuredLLM
@@ -147,6 +147,9 @@ def decide(
     """Combine one claim's (core-rule-checked) votes into a final decision."""
     verdicts = [v.verdict for v in votes]
 
+    features: Features | None = None
+    majority = Verdict.UNVERIFIED
+
     def result(
         judgement: ClaimJudgement,
         p: float,
@@ -163,6 +166,9 @@ def decide(
             judges_disagree=disagree,
             needs_human_review=review is not None,
             review_reason=review,
+            # Calibration inputs, read at call time (None before the panel reached a majority).
+            features=asdict(features) if features else None,
+            calibrated_verdict=majority if features else None,
         )
 
     if len(votes) < MIN_VALID_JUDGES:
