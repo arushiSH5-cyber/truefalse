@@ -43,6 +43,9 @@ services:
       API_URL: http://api:8000
     volumes:
       - ./web:/app
+      # Keep the container's Linux node_modules and build out of the host's web/ folder
+      - /app/node_modules
+      - /app/.next
     ports:
       - "3000:3000"
     depends_on:

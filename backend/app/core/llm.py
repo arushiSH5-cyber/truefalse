@@ -23,6 +23,19 @@ Effort = Literal["low", "medium", "high", "xhigh", "max"]
 # Server-side refusal fallback: if the primary model declines, the API reroutes in the same call.
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
 
+# USD per million (input, output) tokens, first-party API, for cost metrics only. Haiku 5.5's
+# price is for prompts up to 100K tokens, which covers every TrueFalse call.
+ANTHROPIC_PRICES: dict[str, tuple[float, float]] = {
+    "claude-opus-5-5": (4.0, 20.0),
+    "claude-sonnet-5-5": (2.0, 10.0),
+    "claude-haiku-5-5": (0.10, 0.50),
+}
+
+
+def supports_server_fallback(model: str) -> bool:
+    """Claude Haiku has no server-side refusal fallback; sending `fallbacks` would fail."""
+    return not model.startswith("claude-haiku")
+
 
 class LLMError(Exception):
     pass
@@ -54,7 +67,24 @@ class ImageInput:
     data_b64: str
 
 
-class LLMClient(Protocol):
+class StructuredLLM(Protocol):
+    """Anything that returns validated structured output. Every provider adapter has this;
+    judges and other single-call stages only need this part."""
+
+    async def structured(
+        self,
+        *,
+        stage: str,
+        system: str,
+        user: str,
+        output: type[T],
+        effort: Effort = "medium",
+        max_tokens: int = 8000,
+        images: Sequence[ImageInput] = (),
+    ) -> T: ...
+
+
+class LLMClient(StructuredLLM, Protocol):
     async def structured(
         self,
         *,
@@ -95,15 +125,36 @@ class AnthropicLLM:
         self._client = anthropic.AsyncAnthropic(
             api_key=api_key, timeout=timeout_s, max_retries=max_retries
         )
+        self._setup(model, use_fallbacks)
+
+    def _setup(self, model: str, use_fallbacks: bool) -> None:
         self._model = model
+        self._use_fallbacks = use_fallbacks
+        use_fallbacks = use_fallbacks and supports_server_fallback(model)
         # Typed as Any: the SDK's betas param is a Literal list and fallbacks accepts Omit.
         self._betas: Any = [FALLBACK_BETA] if use_fallbacks else anthropic.omit
         self._fallbacks: Any = "default" if use_fallbacks else anthropic.omit
 
+    @property
+    def model(self) -> str:
+        return self._model
+
+    def with_model(self, model: str) -> "AnthropicLLM":
+        """Same client and settings, different model (e.g. a Sonnet or Haiku judge)."""
+        clone = object.__new__(AnthropicLLM)
+        clone._client = self._client
+        clone._setup(model, self._use_fallbacks)
+        return clone
+
     def _usage(self, stage: str, response: Any) -> None:
         usage = getattr(response, "usage", None)
         if usage is not None:
-            record_tokens(stage, usage.input_tokens or 0, usage.output_tokens or 0)
+            record_tokens(
+                stage,
+                usage.input_tokens or 0,
+                usage.output_tokens or 0,
+                ANTHROPIC_PRICES.get(self._model),
+            )
 
     def _check_refusal(self, stage: str, response: Any) -> None:
         if response.stop_reason == "refusal":

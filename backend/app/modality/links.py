@@ -5,6 +5,12 @@ Safety:
 - Hosts resolving to private, loopback, link-local or reserved addresses are refused (SSRF).
 - yt-dlp only runs for an allow-list of public media hosts, never with cookies or logins,
   so only public content is fetched (no private groups or accounts).
+
+Instagram and Facebook often refuse downloads without a login, and TikTok/YouTube sometimes
+block servers. When the full media can't be fetched, `fetch_preview` reads what the platform
+shows publicly for link previews: the official oEmbed endpoint where one works without a key
+(YouTube, TikTok), otherwise the page's `og:` title, description (usually the caption) and
+picture. The caller tells the user that only the preview was checked.
 """
 
 import asyncio
@@ -34,8 +40,10 @@ MEDIA_HOSTS = (
     "youtu.be",
     "tiktok.com",
     "instagram.com",
+    "instagr.am",
     "facebook.com",
     "fb.watch",
+    "fb.com",
     "x.com",
     "twitter.com",
     "vimeo.com",
@@ -62,6 +70,21 @@ MEDIA_HOSTS = (
 )
 POST_PATHS = re.compile(r"/(status|statuses)/\d+")
 
+# Social platforms with special handling, by host suffix.
+PLATFORMS = {
+    "instagram": ("instagram.com", "instagr.am"),
+    "facebook": ("facebook.com", "fb.watch", "fb.com"),
+    "tiktok": ("tiktok.com",),
+    "youtube": ("youtube.com", "youtu.be"),
+    "x": ("x.com", "twitter.com"),
+}
+# Public oEmbed endpoints that need no key. Meta's (Instagram/Facebook) need an app token.
+OEMBED = {
+    "youtube": "https://www.youtube.com/oembed",
+    "tiktok": "https://www.tiktok.com/oembed",
+}
+MAX_THUMBNAIL_BYTES = 3_000_000
+
 
 class UnsafeURLError(Exception):
     pass
@@ -69,13 +92,14 @@ class UnsafeURLError(Exception):
 
 class LinkContent(BaseModel):
     url: str
-    kind: Literal["media", "post", "article"]
+    kind: Literal["media", "post", "article", "preview"]
     title: str | None = None
     text: str = ""
     uploader: str | None = None
     published: str | None = None
     duration_s: float | None = None
     media_path: str | None = None  # downloaded audio/video (temp dir, deleted after use)
+    thumbnail_url: str | None = None  # preview picture, when only the preview could be read
 
 
 def find_urls(text: str) -> list[str]:
@@ -89,6 +113,14 @@ def host_of(url: str) -> str:
 def is_media_host(url: str) -> bool:
     host = host_of(url)
     return any(host == h or host.endswith("." + h) for h in MEDIA_HOSTS)
+
+
+def platform_of(url: str) -> str | None:
+    host = host_of(url)
+    for name, hosts in PLATFORMS.items():
+        if any(host == h or host.endswith("." + h) for h in hosts):
+            return name
+    return None
 
 
 def classify(url: str) -> Literal["media", "post", "article"]:
@@ -126,7 +158,9 @@ async def assert_public_url(url: str) -> None:
         raise UnsafeURLError("host resolves to a non-public address")
 
 
-async def safe_get(http: httpx.AsyncClient, url: str) -> tuple[str, bytes]:
+async def safe_get(
+    http: httpx.AsyncClient, url: str, max_bytes: int = MAX_HTML_BYTES
+) -> tuple[str, bytes]:
     """GET with per-hop SSRF validation and a response size cap. Returns (final_url, body)."""
     for _ in range(MAX_REDIRECTS + 1):
         await assert_public_url(url)
@@ -138,7 +172,7 @@ async def safe_get(http: httpx.AsyncClient, url: str) -> tuple[str, bytes]:
             body = b""
             async for chunk in resp.aiter_bytes():
                 body += chunk
-                if len(body) > MAX_HTML_BYTES:
+                if len(body) > max_bytes:
                     break
             return url, body
     raise UnsafeURLError("too many redirects")
@@ -188,7 +222,10 @@ def extract_article(html: str, url: str) -> tuple[str | None, str, str | None]:
     try:
         import trafilatura
 
-        doc = trafilatura.bare_extraction(html, url=url, with_metadata=True)
+        # Precision over recall: menus and reader comments are not the article being checked.
+        doc = trafilatura.bare_extraction(
+            html, url=url, with_metadata=True, favor_precision=True, include_comments=False
+        )
         if doc:
             data = doc if isinstance(doc, dict) else doc.as_dict()
             if data.get("text"):
@@ -227,6 +264,56 @@ async def fetch_x_post(http: httpx.AsyncClient, url: str) -> LinkContent:
         text=text[:MAX_TEXT_CHARS],
         uploader=data.get("author_name"),
     )
+
+
+def _meta_text(meta: dict[str, str]) -> str:
+    desc = meta.get("og:description") or meta.get("twitter:description") or ""
+    return desc or meta.get("description", "")
+
+
+async def fetch_preview(http: httpx.AsyncClient, url: str) -> LinkContent:
+    """What a platform shows publicly for link previews: caption/title, author, picture."""
+    platform = platform_of(url)
+    if platform in OEMBED:
+        await assert_public_url(url)
+        resp = await http.get(OEMBED[platform], params={"url": url, "format": "json"})
+        resp.raise_for_status()
+        data = resp.json()
+        # TikTok's oEmbed sometimes returns only an iframe; then try the page itself.
+        if data.get("title") or data.get("thumbnail_url"):
+            return LinkContent(
+                url=url,
+                kind="preview",
+                title=data.get("title"),
+                text=(data.get("title") or "")[:MAX_TEXT_CHARS],
+                uploader=data.get("author_name"),
+                thumbnail_url=data.get("thumbnail_url"),
+            )
+    final_url, body = await safe_get(http, url)
+    p = _PageParser()
+    p.feed(body.decode("utf-8", errors="replace"))
+    title = p.meta.get("og:title") or p.meta.get("twitter:title") or p.title or None
+    text = _meta_text(p.meta)
+    image = p.meta.get("og:image") or p.meta.get("twitter:image")
+    if not text and not image:
+        raise ValueError("no public preview (login wall or removed post)")
+    return LinkContent(
+        url=final_url,
+        kind="preview",
+        title=title,
+        text=text[:MAX_TEXT_CHARS],
+        published=p.meta.get("article:published_time"),
+        thumbnail_url=urljoin(final_url, image) if image else None,
+    )
+
+
+async def fetch_thumbnail(http: httpx.AsyncClient, url: str, dest: Path) -> Path | None:
+    """Download a preview picture (SSRF-safe). None if it is not a complete image."""
+    _, body = await safe_get(http, url, max_bytes=MAX_THUMBNAIL_BYTES)
+    if len(body) >= MAX_THUMBNAIL_BYTES or not body:
+        return None
+    await asyncio.to_thread(dest.write_bytes, body)
+    return dest
 
 
 class YtDlpDownloader:

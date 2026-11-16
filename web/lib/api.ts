@@ -8,16 +8,38 @@ export interface PublicSource {
   published: string | null;
 }
 
+export type AIOverall = "likely_ai" | "possibly_ai" | "recycled" | "edited" | "no_signal";
+
+export interface AISignal {
+  detector: string;
+  media: "image" | "video" | "audio" | "text";
+  finding: "ai_generated" | "edited" | "recycled" | "camera_original" | "no_finding";
+  strength: "strong" | "moderate" | "weak";
+  score: number | null;
+  detail: string;
+  source_url: string | null;
+}
+
 export interface PublicResult {
   verdict: Verdict;
   verdict_label: string;
   confidence: "high" | "medium" | "low";
   language: string;
   reply_text: string;
+  /** Two-line reason, in the reply language. */
   explanation: string;
+  /** Short message to forward to the chat the claim came from; ends with the top source link. */
+  correction: string;
+  confidence_label: string;
+  sources_heading: string;
+  forward_heading: string;
   warnings: string[];
   sources: PublicSource[];
   claims: string[];
+  needs_human_review: boolean;
+  ai_overall: AIOverall;
+  /** Every AI-content check result, weak hints included (shown under "More" only). */
+  ai_signals: AISignal[];
 }
 
 export interface JobRecord {
@@ -69,4 +91,13 @@ export async function getJob(id: string): Promise<JobRecord | null> {
 
 export function cardUrl(id: string): string {
   return `${API_URL}/api/check/${encodeURIComponent(id)}/card.png`;
+}
+
+export async function sendFeedback(id: string, rating: "up" | "down", note = ""): Promise<void> {
+  const res = await fetch(`${API_URL}/api/check/${encodeURIComponent(id)}/feedback`, {
+    method: "POST",
+    body: JSON.stringify({ rating, note }),
+    headers: { "Content-Type": "application/json", "X-Client-Id": clientId() },
+  });
+  if (!res.ok) throw new Error(`Error ${res.status}`);
 }

@@ -61,10 +61,13 @@ def parse_update(data: dict[str, Any], salt: str) -> Inbound | None:
     text = msg.text or msg.caption
     parts: list[Part] = []
     command = None
+    command_args = ""
     if text:
         stripped = text.strip()
         if stripped.startswith("/"):
-            command = stripped.split()[0][1:].split("@")[0].lower()
+            head, _, command_args = stripped.partition(" ")
+            command = head[1:].split("@")[0].lower()
+            command_args = command_args.strip()
         else:
             parts.append(Part(kind=PartKind.TEXT, text=stripped))
 
@@ -102,6 +105,7 @@ def parse_update(data: dict[str, Any], salt: str) -> Inbound | None:
         submission=submission,
         target=target,
         command=command,
+        command_args=command_args,
         has_unsupported_media=unsupported_doc and not parts,
     )
 

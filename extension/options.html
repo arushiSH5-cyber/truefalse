@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>TrueFalse settings</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <h1>TrueFalse settings</h1>
+  <form id="form">
+    <label for="api">TrueFalse server address</label>
+    <input id="api" type="url" required placeholder="http://localhost:8000">
+    <p class="muted">The backend you run (see the project README). The extension sends what you choose to check only to this address.</p>
+    <button type="submit" class="primary">Save</button>
+  </form>
+  <p id="status" role="status"></p>
+  <script type="module" src="options.js"></script>
+</body>
+</html>

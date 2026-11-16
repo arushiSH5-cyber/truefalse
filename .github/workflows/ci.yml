@@ -33,11 +33,12 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           python-version: "3.12"
-      - run: uv sync
+      # media + ai_detect extras: real audio decoding, article extraction and C2PA are tested
+      - run: uv sync --extra media --extra ai_detect
       - name: Lint
         run: uv run ruff check . && uv run ruff format --check .
       - name: Type check
-        run: uv run mypy app scripts
+        run: uv run mypy app scripts eval
       - name: Migrate
         run: uv run alembic upgrade head
       - name: Test (unit + Postgres integration)
@@ -59,3 +60,26 @@ jobs:
       - run: npx tsc --noEmit
       - run: npx next lint
       - run: npx next build
+
+  extension:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: extension
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Manifest is valid JSON and every referenced file exists
+        run: |
+          node -e '
+            const fs = require("fs");
+            const m = JSON.parse(fs.readFileSync("manifest.json", "utf8"));
+            const files = [m.background.service_worker, m.action.default_popup, m.options_page,
+              ...Object.values(m.icons), ...Object.values(m.action.default_icon)];
+            const missing = files.filter((f) => !fs.existsSync(f));
+            if (missing.length) { console.error("missing:", missing); process.exit(1); }
+          '
+      - name: Scripts parse as ES modules
+        run: for f in *.js; do cp "$f" "/tmp/${f%.js}.mjs"; node --check "/tmp/${f%.js}.mjs"; done

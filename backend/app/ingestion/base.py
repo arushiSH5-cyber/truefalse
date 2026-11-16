@@ -25,4 +25,5 @@ class Inbound(BaseModel):
     submission: Submission
     target: ReplyTarget
     command: str | None = None
+    command_args: str = ""  # text after the command, e.g. the note in "/wrong <note>"
     has_unsupported_media: bool = False

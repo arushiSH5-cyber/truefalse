@@ -4,36 +4,51 @@ Every provider is optional: a missing one produces a user-facing note instead of
 All downloaded media lives in a temp dir owned by the caller and is deleted afterwards.
 """
 
+import asyncio
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
+from uuid import uuid4
 
 import httpx
 from pydantic import BaseModel, Field
 
+from app.ai_detect.detector import AIDetector
+from app.ai_detect.signals import AISignal, MediaKind, Strength
 from app.core.llm import LLMClient
 from app.core.logging import get_logger
-from app.core.models import Part, PartKind, Platform, Submission
-from app.modality.audio import chunk_segments, render_chunks, select_claim_chunks
+from app.core.models import EvidenceDraft, Part, PartKind, Platform, Submission
+from app.modality.audio import chunk_segments, fmt_time, render_chunks, select_claim_chunks
 from app.modality.base import SpeechToText
 from app.modality.hashes import ImageHashStore, SeenImage
-from app.modality.image import analyze_images
+from app.modality.image import (
+    ImageAnalysis,
+    ImageKind,
+    VideoAnalysis,
+    analyze_images,
+    analyze_video,
+)
 from app.modality.links import (
     LinkContent,
     YtDlpDownloader,
     classify,
     fetch_article,
+    fetch_preview,
+    fetch_thumbnail,
     fetch_x_post,
     find_urls,
+    platform_of,
 )
-from app.modality.media import compress_image, perceptual_hash
-from app.modality.video import MediaToolError, extract_audio, extract_keyframes
+from app.modality.media import compress_image, image_tiles, perceptual_hash
+from app.modality.video import Frame, MediaToolError, extract_audio, extract_frames
 
 log = get_logger(__name__)
 
 MAX_LINKS = 2
 MAX_IMAGES = 4
+# Keyframes are smaller than photos: 8 frames at full size would cost a lot of tokens.
+VIDEO_FRAME_EDGE = 1024
 MAX_AUDIO_SECONDS = 3600.0
 
 ProgressFn = Callable[[str], Awaitable[None]]
@@ -54,6 +69,7 @@ class MediaProviders:
     hashes: ImageHashStore | None = None
     http: httpx.AsyncClient | None = None
     downloader: YtDlpDownloader | None = None
+    ai: AIDetector | None = None  # AI-content and recycled-media checks
 
 
 class ProcessedContent(BaseModel):
@@ -63,6 +79,8 @@ class ProcessedContent(BaseModel):
     seen_before: list[SeenImage] = Field(default_factory=list)
     transcript_language: str | None = None
     used_media: bool = False
+    ai_signals: list[AISignal] = Field(default_factory=list)
+    evidence_seed: list[EvidenceDraft] = Field(default_factory=list)  # e.g. reverse-image pages
 
 
 @dataclass
@@ -73,6 +91,8 @@ class _Acc:
     seen: list[SeenImage] = field(default_factory=list)
     language: str | None = None
     used_media: bool = False
+    ai: list[AISignal] = field(default_factory=list)
+    seed: list[EvidenceDraft] = field(default_factory=list)
 
     def warn(self, text: str) -> None:
         if text not in self.warnings:
@@ -80,29 +100,81 @@ class _Acc:
 
 
 W_EDITED = "The picture or video may have been edited."
-W_AI = "The picture or video may have been made or changed with AI."
 W_TRANSCRIBED = "We turned the audio into text automatically, so small mistakes are possible."
 W_MEDIA_FAILED = "We could not open part of what you sent, so we checked only the rest."
 W_UNSUPPORTED = "This kind of file can't be checked on this server yet."
+W_PREVIEW_ONLY = (
+    "We could only see the public preview of this post (its caption and picture), "
+    "not the full video or all of its pictures."
+)
 
 
-async def _images(paths: Sequence[Path], p: MediaProviders, acc: _Acc, label: str) -> None:
-    paths = list(paths)[:MAX_IMAGES]
-    if not paths:
-        return
-    for path in paths if label == "image" else paths[:1]:
-        phash = perceptual_hash(path)
-        acc.hashes.append(phash)
-        if p.hashes and (seen := await p.hashes.lookup(phash)):
-            acc.seen.append(seen)
-    a = await analyze_images(p.llm, [compress_image(x) for x in paths])
-    if a.text_in_image.strip():
-        acc.texts.append(f"[Text visible in the {label}]: {a.text_in_image.strip()}")
+async def _remember(path: Path, p: MediaProviders, acc: _Acc) -> None:
+    phash = perceptual_hash(path)
+    acc.hashes.append(phash)
+    if p.hashes and (seen := await p.hashes.lookup(phash)):
+        acc.seen.append(seen)
+
+
+async def _no_ai() -> tuple[list[AISignal], list[EvidenceDraft]]:
+    return [], []
+
+
+async def _images(paths: Sequence[Path], p: MediaProviders, acc: _Acc) -> None:
+    for path in list(paths)[:MAX_IMAGES]:
+        await _remember(path, p, acc)
+        tiles = image_tiles(path)
+        kind: ImageKind = "slices" if len(tiles) > 1 else "image"
+        # AI checks read the original file (credentials, metadata), so they run on `path`.
+        a, (signals, seed) = await asyncio.gather(
+            analyze_images(p.llm, tiles, kind),
+            p.ai.check_image(path) if p.ai else _no_ai(),
+        )
+        acc.ai += signals
+        acc.seed += seed
+        if a.text_in_image.strip():
+            acc.texts.append(f"[Text visible in the image]: {a.text_in_image.strip()}")
+        _record(acc, "image", a)
+
+
+async def _frames(video: Path, frames: Sequence[Frame], p: MediaProviders, acc: _Acc) -> None:
+    await _remember(frames[0].path, p, acc)
+    a, (signals, seed) = await asyncio.gather(
+        analyze_video(
+            p.llm, [(f.time_s, compress_image(f.path, VIDEO_FRAME_EDGE)) for f in frames]
+        ),
+        p.ai.check_video(video, [f.path for f in frames]) if p.ai else _no_ai(),
+    )
+    acc.ai += signals
+    acc.seed += seed
+    times = {i: f.time_s for i, f in enumerate(frames, 1)}
+    lines = [
+        f"[{fmt_time(times[t.frame])}] {t.text.strip()}"
+        for t in a.on_screen_text
+        if t.text.strip() and t.frame in times
+    ]
+    if lines:
+        acc.texts.append("[Text on screen in the video, with timestamps]:\n" + "\n".join(lines))
+    _record(acc, "video", a)
+
+
+def _record(acc: _Acc, label: str, a: ImageAnalysis | VideoAnalysis) -> None:
     acc.texts.append(f"[What the {label} shows]: {a.description}")
     if a.possible_editing_signs:
         acc.warn(W_EDITED)
     if a.possibly_ai_generated:
-        acc.warn(W_AI)
+        # The vision model's impression alone is a weak hint, not a user-facing warning; it
+        # only counts when another detector agrees (see ai_detect.signals.AIReport).
+        media: MediaKind = "video" if label == "video" else "image"
+        acc.ai.append(
+            AISignal(
+                detector="vision_llm",
+                media=media,
+                finding="ai_generated",
+                strength=Strength.WEAK,
+                detail=f"The {media} shows visual cues that are common in AI-made pictures.",
+            )
+        )
     acc.language = acc.language or a.language
 
 
@@ -110,6 +182,8 @@ async def _audio(path: Path, p: MediaProviders, acc: _Acc, label: str, hint: str
     if p.stt is None:
         acc.warn(W_UNSUPPORTED)
         return
+    if p.ai:
+        acc.ai += await p.ai.check_audio(path)
     transcript = await p.stt.transcribe(str(path), hint)
     chunks = await select_claim_chunks(p.llm, chunk_segments(transcript.segments))
     if chunks:
@@ -121,32 +195,49 @@ async def _audio(path: Path, p: MediaProviders, acc: _Acc, label: str, hint: str
 async def _video(path: Path, workdir: Path, p: MediaProviders, acc: _Acc, hint: str | None) -> None:
     try:
         audio = await extract_audio(path, workdir, MAX_AUDIO_SECONDS)
-        frames = await extract_keyframes(path, workdir)
+        frames = await extract_frames(path, workdir)
     except MediaToolError as exc:
         log.warning("video_failed", error=str(exc))
         acc.warn(W_MEDIA_FAILED)
         return
     if frames:
-        await _images(frames, p, acc, "video")
+        await _frames(path, frames, p, acc)
     if audio:
         await _audio(audio, p, acc, "Video audio", hint)
 
 
+async def _media_link(url: str, workdir: Path, p: MediaProviders, acc: _Acc) -> LinkContent | None:
+    """Full media via yt-dlp; if that fails (login wall, blocked server), the public preview."""
+    if p.downloader is not None:
+        try:
+            return await p.downloader.fetch(url, workdir)
+        except Exception as exc:
+            if p.http is None:
+                raise
+            log.info("media_download_failed", platform=platform_of(url), error=type(exc).__name__)
+    if p.http is None:
+        acc.warn(W_UNSUPPORTED)
+        return None
+    content = await fetch_preview(p.http, url)
+    acc.warn(W_PREVIEW_ONLY)
+    return content
+
+
 async def _link(url: str, workdir: Path, p: MediaProviders, acc: _Acc, hint: str | None) -> None:
     kind = classify(url)
-    content: LinkContent
+    content: LinkContent | None
     if kind == "media":
-        if p.downloader is None:
-            acc.warn(W_UNSUPPORTED)
+        content = await _media_link(url, workdir, p, acc)
+        if content is None:
             return
-        content = await p.downloader.fetch(url, workdir)
     elif p.http is None:
         return
     elif kind == "post":
         content = await fetch_x_post(p.http, url)
     else:
         content = await fetch_article(p.http, url)
-    header = f"[Linked {content.kind}{': ' + content.title if content.title else ''}"
+    label = {"preview": "post (preview only)"}.get(content.kind, content.kind)
+    header = f"[Linked {label}{': ' + content.title if content.title else ''}"
     header += f" by {content.uploader}" if content.uploader else ""
     header += f", published {content.published}" if content.published else ""
     acc.texts.append(f"{header}]\n{content.text}".strip())
@@ -156,6 +247,10 @@ async def _link(url: str, workdir: Path, p: MediaProviders, acc: _Acc, hint: str
             await _video(media, workdir, p, acc, hint)
         else:
             await _audio(media, p, acc, "Linked audio", hint)
+    elif content.thumbnail_url and p.http is not None:
+        thumb = await fetch_thumbnail(p.http, content.thumbnail_url, workdir / f"{uuid4().hex}.jpg")
+        if thumb is not None:
+            await _images([thumb], p, acc)
 
 
 async def process_submission(
@@ -184,7 +279,7 @@ async def process_submission(
                 continue
             path = await fetcher.fetch(part, workdir)
             if part.kind is PartKind.IMAGE:
-                await _images([path], p, acc, "image")
+                await _images([path], p, acc)
             elif part.kind is PartKind.AUDIO:
                 await _audio(path, p, acc, "Voice note", hint)
             elif part.kind is PartKind.VIDEO:
@@ -210,4 +305,6 @@ async def process_submission(
         seen_before=acc.seen,
         transcript_language=acc.language,
         used_media=acc.used_media,
+        ai_signals=acc.ai,
+        evidence_seed=acc.seed,
     )

@@ -8,7 +8,7 @@ from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 from app import __version__
-from app.api import health, telegram, web, whatsapp
+from app.api import health, review, telegram, web, whatsapp
 from app.core import db
 from app.core.config import get_settings
 from app.core.logging import configure_logging, get_logger, new_trace_id, trace_id_var
@@ -55,12 +55,13 @@ def create_app() -> FastAPI:
         CORSMiddleware,
         allow_origins=[o.strip() for o in get_settings().web_origins.split(",") if o.strip()],
         allow_methods=["GET", "POST"],
-        allow_headers=["X-Client-Id", "Content-Type", "Accept-Language"],
+        allow_headers=["X-Client-Id", "Content-Type", "Accept-Language", "Authorization"],
     )
     app.include_router(health.router)
     app.include_router(telegram.router)
     app.include_router(whatsapp.router)
     app.include_router(web.router)
+    app.include_router(review.router)
     return app
 
 

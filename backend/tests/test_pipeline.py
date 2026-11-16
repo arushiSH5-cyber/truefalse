@@ -154,4 +154,9 @@ async def test_tool_call_cap(submission, spanish_health_extraction, factcheck_dr
     ]
     source = FakeSource(SourceKind.FACTCHECK, [factcheck_draft])
     await run_check(submission, Deps(llm, [source], PipelineConfig(research_max_tool_calls=3)))
-    assert len(source.queries) == 3
+    # 2 code-guaranteed fact-check lookups (English, then Spanish original) + 3 capped agent calls
+    assert source.queries[:2] == [
+        ("Hot water with lemon cures cancer", None),
+        ("El agua caliente con limón cura el cáncer", "es"),
+    ]
+    assert [q for q, _ in source.queries[2:]] == ["q0", "q1", "q2"]

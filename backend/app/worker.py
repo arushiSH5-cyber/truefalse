@@ -7,19 +7,23 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, ClassVar
 
+from arq import cron
+
 from app.core.config import get_settings
 from app.core.container import build_deps, build_extras, build_http_client, build_platforms
 from app.core.jobs import RedisJobStore
 from app.core.logging import configure_logging, get_logger, trace_id_var
-from app.core.models import CheckReport, PartKind, ReplyTarget, Submission
+from app.core.models import CheckReport, PartKind, Platform, ReplyTarget, Submission
 from app.core.prefs import PrefsStore, UserPrefs
 from app.core.queue import redis_settings
+from app.core.review import ReviewStore, item_from_report
 from app.core.trace import RunTrace
 from app.ingestion.base import Messenger
-from app.ingestion.common import FAILURE, WELCOME, WORKING_ON_MEDIA, localized
+from app.ingestion.common import FAILURE, WELCOME, WORKING_ON_MEDIA, say
 from app.ingestion.router import RoutingMessenger
 from app.modality.base import TextToSpeech
 from app.pipeline import Deps, run_check
+from app.respond.digest import TrendStore, send_digests, trend_entries
 from app.respond.translate import Translator
 
 log = get_logger(__name__)
@@ -33,6 +37,22 @@ class Extras:
     translator: Translator | None = None
     tts: TextToSpeech | None = None
     tts_supports: Callable[[str], bool] | None = None
+    reviews: ReviewStore | None = None
+    trends: TrendStore | None = None
+
+
+async def _record(extras: Extras, submission: Submission, report: CheckReport) -> None:
+    """Review queue, `/wrong` and the weekly digest. Best effort: never blocks the answer."""
+    platform = submission.platform.value
+    if extras.reviews:
+        if report.needs_human_review:
+            await extras.reviews.add(item_from_report(report, platform))
+        if submission.platform is not Platform.WEB:  # web users report by job id instead
+            recent = item_from_report(report, platform, kind="user_report")
+            await extras.reviews.remember_recent(submission.user_hash, recent)
+    if extras.trends:
+        for entry in trend_entries(report):
+            await extras.trends.record(entry)
 
 
 async def _maybe_voice(
@@ -74,11 +94,14 @@ async def process(
     with contextlib.suppress(Exception):
         await messenger.send_typing(target)
 
+    # Before the check finishes, the user's language is only known from prefs or the platform.
+    hint = (prefs.reply_language if prefs else None) or submission.language_hint
+
     async def progress(kind: str) -> None:
         if kind == "media":
             with contextlib.suppress(Exception):
                 await messenger.send_text(
-                    target, localized(WORKING_ON_MEDIA, submission.language_hint)
+                    target, await say(WORKING_ON_MEDIA, hint, extras.translator)
                 )
 
     try:
@@ -93,7 +116,8 @@ async def process(
         status = "ok"
     except Exception as exc:
         log.exception("check_failed", error=str(exc))
-        report, text, status = None, FAILURE, "failed"
+        report, status = None, "failed"
+        text = await say(FAILURE, hint, extras.translator)
 
     # First-time users get the welcome, in their language, before their first answer.
     if report and extras.prefs and (prefs is None or not prefs.welcomed):
@@ -117,6 +141,12 @@ async def process(
         with contextlib.suppress(Exception):
             await finish(target, report)
 
+    if report:
+        try:
+            await _record(extras, submission, report)
+        except Exception as exc:
+            log.warning("record_failed", error=str(exc))
+
     # Voice in -> voice out; or always, if the user turned voice replies on.
     voice_sent = False
     sent_voice = any(p.kind is PartKind.AUDIO for p in submission.parts)
@@ -137,6 +167,12 @@ async def process(
         probability=[d.probability for d in report.decisions] if report else [],
         grounded_ratio=[d.grounded_ratio for d in report.decisions] if report else [],
         judges_disagree=any(d.judges_disagree for d in report.decisions) if report else False,
+        needs_human_review=report.needs_human_review if report else False,
+        cached_claims=report.cached_claims if report else 0,
+        review_reasons=report.review_reasons if report else [],
+        voters=sorted({v for d in report.decisions for v in d.voters}) if report else [],
+        ai_overall=report.ai_report.overall if report else None,
+        ai_detectors=sorted({s.detector for s in report.ai_report.signals}) if report else [],
         stages={k: v.model_dump() for k, v in trace.stages.items()},
         cost_usd=trace.cost_usd(*prices),
         voice_reply=voice_sent,
@@ -146,6 +182,28 @@ async def process(
 
 async def check_submission(ctx: dict[str, Any], payload: dict[str, Any]) -> str:
     return await process(payload, ctx["deps"], ctx["messenger"], ctx["prices"], ctx["extras"])
+
+
+async def weekly_digest(ctx: dict[str, Any]) -> int:
+    extras: Extras = ctx["extras"]
+    if extras.prefs is None or extras.trends is None:
+        return 0
+    return await send_digests(extras.prefs, extras.trends, ctx["messenger"], extras.translator)
+
+
+def _cron_jobs() -> list[Any]:
+    settings = get_settings()
+    if not settings.digest_enabled:
+        return []
+    return [
+        cron(
+            weekly_digest,
+            weekday=settings.digest_weekday,
+            hour=settings.digest_hour_utc,
+            minute=0,
+            run_at_startup=False,
+        )
+    ]
 
 
 async def startup(ctx: dict[str, Any]) -> None:
@@ -164,16 +222,28 @@ async def startup(ctx: dict[str, Any]) -> None:
 
 
 async def shutdown(ctx: dict[str, Any]) -> None:
-    closables = [ctx["messenger"], ctx["jobs"], ctx["extras"].prefs]
+    # Startup may have failed part-way (e.g. a missing key); close only what was built,
+    # so the startup error is what gets reported.
+    extras, deps = ctx.get("extras"), ctx.get("deps")
+    closables = [
+        ctx.get("messenger"),
+        ctx.get("jobs"),
+        extras.prefs if extras else None,
+        extras.reviews if extras else None,
+        extras.trends if extras else None,
+        deps.verdicts if deps else None,
+    ]
+    http = ctx.get("http")
     await asyncio.gather(
-        ctx["http"].aclose(),
-        *(c.close() for c in closables if hasattr(c, "close")),
+        *([http.aclose()] if http else []),
+        *(c.close() for c in closables if c is not None and hasattr(c, "close")),
         return_exceptions=True,
     )
 
 
 class WorkerSettings:
     functions: ClassVar[list[Any]] = [check_submission]
+    cron_jobs: ClassVar[list[Any]] = _cron_jobs()
     on_startup = startup
     on_shutdown = shutdown
     redis_settings = redis_settings(get_settings().redis_url)

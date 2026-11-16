@@ -42,7 +42,17 @@ def _ev(
 
 
 EVIDENCE = {"E1": _ev("E1", 1), "E2": _ev("E2", 2, rating="False"), "E3": _ev("E3", 3)}
-CLAIM = Claim(original="o", english="Lemon cures cancer", topic="health", potentially_harmful=True)
+CLAIM = Claim(
+    original="o",
+    english="Lemon cures cancer",
+    topic="health",
+    potentially_harmful=True,
+    who="lemon",
+    did="cures cancer",
+    where=None,
+    when=None,
+    local_languages=[],
+)
 
 
 def _vote(verdict: Verdict, conf: Confidence = C.HIGH, cited=("E1",), expl="Evidence says no."):
@@ -83,10 +93,62 @@ def _vote(verdict: Verdict, conf: Confidence = C.HIGH, cited=("E1",), expl="Evid
         ("Not real", V.FALSE),
         (None, None),
         ("Four Pinocchios", None),
+        # Negated "true" must never read as True (regression): left to the LLM fallback.
+        ("Unwahr", None),
+        ("Non vero", None),
+        ("No es cierto", None),
+        ("doğru değil", None),
+        ("सही नहीं", None),
+        ("неверно", None),
+        ("不正确", None),
+        ("ليس صحيحا", None),
+        ("Not accurate", None),
     ],
 )
 def test_normalize_rating(rating, expected) -> None:
     assert normalize_rating(rating) is expected
+
+
+async def test_resolve_ratings_llm_fallback_and_cache() -> None:
+    from app.verify import ratings
+
+    ratings._CACHE.clear()
+    llm = FakeLLM().queue(
+        "ratings",
+        ratings.RatingLabels(
+            labels=[
+                ratings.RatingLabel(index=0, verdict=V.FALSE),  # "Four Pinocchios"
+                ratings.RatingLabel(index=1, verdict=V.FALSE),  # "Non vero"
+            ]
+        ),
+    )
+    evidence = [
+        _ev("a", rating="Non vero"),
+        _ev("b", rating="Four Pinocchios"),
+        _ev("c", rating="False"),
+    ]
+    out = await ratings.resolve_ratings(llm, evidence)
+    assert [ratings.rating_verdict(e) for e in out] == [V.FALSE, V.FALSE, V.FALSE]
+    # Cached: a second call makes no LLM request (nothing else is queued, so it would fail).
+    again = await ratings.resolve_ratings(llm, [_ev("d", rating="Non vero")])
+    assert ratings.rating_verdict(again[0]) is V.FALSE
+    assert sum(c["stage"] == "ratings" for c in llm.calls) == 1
+
+
+async def test_resolve_ratings_failure_leaves_unknown() -> None:
+    from app.verify import ratings
+
+    ratings._CACHE.clear()
+    out = await ratings.resolve_ratings(FakeLLM(), [_ev("a", rating="Non vero")])
+    assert ratings.rating_verdict(out[0]) is None
+
+
+def test_negated_true_factcheck_does_not_support_true_verdict() -> None:
+    from app.verify.judges import factcheck_consensus
+
+    assert factcheck_consensus(V.TRUE, [_ev("a", rating="Non vero")]) == 0
+    resolved = _ev("a", rating="Non vero").model_copy(update={"rating_verdict": V.FALSE})
+    assert factcheck_consensus(V.TRUE, [resolved]) == -1
 
 
 def test_evidence_conflict() -> None:
@@ -248,3 +310,69 @@ async def test_grounding_skips_unverified() -> None:
     )
     assert await ground(llm, [unv], EVIDENCE) == [unv]
     assert llm.calls == []
+
+
+# ---- human review flag ---------------------------------------------------------------------
+
+
+def test_review_flag_reasons() -> None:
+    from app.verify.judges import (
+        JUDGES_FAILED_EXPLANATION,
+        REVIEW_FACTCHECK_CONTRADICTS,
+        REVIEW_JUDGES_DISAGREE,
+        REVIEW_TOO_FEW_JUDGES,
+    )
+
+    agree = decide(0, [_vote(V.FALSE, cited=("E1", "E2"))] * 3, EVIDENCE, Calibrator())
+    assert not agree.needs_human_review and agree.review_reason is None
+
+    split = decide(0, [_vote(V.FALSE), _vote(V.TRUE), _vote(V.UNVERIFIED)], EVIDENCE, Calibrator())
+    assert split.needs_human_review and split.review_reason == REVIEW_JUDGES_DISAGREE
+
+    contra = decide(0, [_vote(V.TRUE, cited=("E1", "E2"))] * 3, EVIDENCE, Calibrator())
+    assert contra.review_reason == REVIEW_FACTCHECK_CONTRADICTS
+
+    lonely = decide(0, [_vote(V.FALSE)], EVIDENCE, Calibrator())
+    assert lonely.review_reason == REVIEW_TOO_FEW_JUDGES
+    assert lonely.judgement.explanation == JUDGES_FAILED_EXPLANATION
+
+    # Weak evidence is plain Unverified, not a disagreement: no review needed.
+    weak = decide(0, [_vote(V.UNVERIFIED, cited=())] * 3, EVIDENCE, Calibrator())
+    assert weak.judgement.verdict is V.UNVERIFIED and not weak.needs_human_review
+
+
+async def test_no_evidence_is_unverified_without_review() -> None:
+    (d,) = await judge(FakeLLM(), [CLAIM], [])
+    assert d.judgement.verdict is V.UNVERIFIED and not d.needs_human_review
+
+
+async def test_report_and_public_result_carry_review_flag(
+    submission, spanish_health_extraction, factcheck_draft
+) -> None:
+    from app.core.jobs import public_result
+    from app.core.models import ComposedReply
+    from app.core.models import SourceKind as SK
+    from app.pipeline import Deps, run_check
+    from tests.fakes import FakeSource
+
+    llm = FakeLLM().queue("extract", spanish_health_extraction)
+    llm.queue_panel(
+        JudgePanelOutput(judgements=[_vote(V.FALSE, cited=("E1",))]),
+        JudgePanelOutput(judgements=[_vote(V.TRUE, cited=("E1",))]),
+        JudgePanelOutput(judgements=[_vote(V.UNVERIFIED, cited=())]),
+    )
+    llm.queue(
+        "compose",
+        ComposedReply(
+            verdict_label="No verificado",
+            explanation="x",
+            confidence_label="c",
+            warnings=[],
+            safety_note=None,
+            sources_heading="Fuentes",
+        ),
+    )
+    report = await run_check(submission, Deps(llm, [FakeSource(SK.FACTCHECK, [factcheck_draft])]))
+    assert report.overall is V.UNVERIFIED
+    assert report.needs_human_review and report.review_reasons == ["judges_disagree"]
+    assert public_result(report).needs_human_review
