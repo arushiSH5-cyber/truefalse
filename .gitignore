@@ -13,3 +13,15 @@ dist/
 
 # Eval outputs (may contain dataset text)
 backend/eval/results/
+
+# --- Secrets: never commit these ---
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.p12
+*.pfx
+credentials*.json
+client_secret*.json
+service-account*.json
