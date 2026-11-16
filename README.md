@@ -45,7 +45,7 @@ cd backend && uv sync && uv run pytest
 
 ## Built with
 
-Python, FastAPI, Postgres + pgvector, Redis, Claude API, Next.js, Tailwind
+Python, FastAPI, Postgres + pgvector, Redis, LLM APIs, Next.js, Tailwind
 
 ## Project layout
 
