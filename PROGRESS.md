@@ -103,12 +103,17 @@ limits and file locations per item are in [GAP_ANALYSIS.md](GAP_ANALYSIS.md) §6
   flag, correction, sources, AI checks) and the share-card PNG rendered in Docker.
 - 343 backend tests pass (2 skipped), ruff and strict mypy clean, web type-check/lint/build clean.
 
-## Later (not in the proposal)
-- Chrome extension (`extension/` is an empty placeholder)
-- Opt-in weekly digest (the preference fields already exist)
-- Thumbs up/down, "Report a mistake", and a human review queue (the `needs_human_review`
-  flag is set and logged; nothing collects the flagged answers yet)
-- Web app labels ("Check it", "Checking…") are English; the answers themselves are translated
+### Extras (2026-11-16)
+- **Calibration refit:** decisions keep their calibration inputs; `eval.run --fit-calibrator`
+  refits the confidence model on real results and writes `calibration_params.json`.
+- **Feedback + human review queue:** 👍/👎 and "Report a mistake" in the web app and the
+  extension, `/wrong <note>` in the bots. Flagged and reported answers go to a review queue
+  (`/api/review`, needs `REVIEW_TOKEN`); resolved items export as eval data.
+- **Weekly digest:** `/digest` in the bots subscribes to a weekly list of the most-forwarded
+  false claims (arq cron, translated per subscriber).
+- **Web app labels** in 10 languages (en, es, pt, fr, de, hi, ar, zh, id, sw), RTL for Arabic.
+- **Chrome extension** (`extension/`): right-click text, links, images or pages to check them.
+- MIT license; simpler README.
 
 ## Blockers / notes
 - **Not yet run against real APIs.** Every external call is tested only against fakes and saved
