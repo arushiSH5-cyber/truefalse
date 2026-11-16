@@ -272,6 +272,8 @@ def build_verdict_cache(settings: Settings) -> "VerdictCache | None":
 
 def build_extras(settings: Settings, llm: LLMClient) -> "Extras":
     from app.core.prefs import RedisPrefsStore
+    from app.core.review import RedisReviewStore
+    from app.respond.digest import RedisTrendStore
     from app.respond.translate import Translator
     from app.worker import Extras
 
@@ -287,6 +289,8 @@ def build_extras(settings: Settings, llm: LLMClient) -> "Extras":
         translator=Translator(fast),
         tts=tts,
         tts_supports=supports,
+        reviews=RedisReviewStore(settings.redis_url),
+        trends=RedisTrendStore(settings.redis_url) if settings.digest_enabled else None,
     )
 
 

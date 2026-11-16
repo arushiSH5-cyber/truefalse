@@ -3,21 +3,24 @@
 POST /api/check            multipart: text?, url?, file?   header X-Client-Id (random, anonymous)
 GET  /api/check/{id}       job status, progress messages and the result
 GET  /api/check/{id}/card.png   shareable correction card
+POST /api/check/{id}/feedback   {"rating": "up"|"down", "note"?: str}; "down" goes to review
 Job ids are random 128-bit values, so a result URL is only known to whoever created it.
 """
 
 import asyncio
 from functools import lru_cache
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Response, UploadFile
+from pydantic import BaseModel, Field
 
-from app.api.telegram import get_queue
+from app.api.telegram import get_queue, get_reviews
 from app.core.config import Settings, get_settings
 from app.core.jobs import MAX_UPLOAD_BYTES, JobRecord, JobStore, RedisJobStore
 from app.core.models import Part, PartKind, Platform, ReplyTarget, Submission
 from app.core.ratelimit import RateLimiter, RedisRateLimiter
+from app.core.review import ReviewStore, clean_note, item_from_public
 from app.ingestion.base import JobQueue
 from app.ingestion.common import hash_user
 from app.ingestion.handler import CHECK_JOB
@@ -45,6 +48,9 @@ def get_jobs(settings: Annotated[Settings, Depends(get_settings)]) -> JobStore:
 
 def get_limiter(settings: Annotated[Settings, Depends(get_settings)]) -> RateLimiter:
     return _limiter(settings.redis_url)
+
+
+FEEDBACK_PER_HOUR = 30
 
 
 def _language_hint(accept_language: str | None) -> str | None:
@@ -134,3 +140,43 @@ async def share_card(
         font_dir=Path(settings.share_card_font_dir),
     )
     return Response(png, media_type="image/png", headers={"Cache-Control": "private, max-age=3600"})
+
+
+class Feedback(BaseModel):
+    rating: Literal["up", "down"]
+    note: str = Field(default="", max_length=2000)
+
+
+@router.post("/check/{job_id}/feedback")
+async def feedback(
+    job_id: str,
+    body: Feedback,
+    settings: Annotated[Settings, Depends(get_settings)],
+    jobs: Annotated[JobStore, Depends(get_jobs)],
+    reviews: Annotated[ReviewStore, Depends(get_reviews)],
+    limiter: Annotated[RateLimiter, Depends(get_limiter)],
+    client_id: Annotated[str, Header(alias="X-Client-Id", min_length=8, max_length=64)],
+) -> dict[str, str | None]:
+    """Thumbs up/down on a web answer. Thumbs down (with an optional note) is queued for a
+    person to review; nothing about the user is stored."""
+    user_hash = hash_user(settings.user_hash_salt.get_secret_value(), "web", client_id)
+    if not await limiter.allow(user_hash + ":feedback", FEEDBACK_PER_HOUR):
+        raise HTTPException(429, "Too much feedback. Please try again later.")
+    rec = await jobs.get(job_id) if job_id.isalnum() else None
+    if rec is None or rec.result is None:
+        raise HTTPException(404, "Not found or not ready")
+    await reviews.count_feedback(body.rating)
+    if body.rating == "up":
+        return {"status": "thanks", "review_id": None}
+    r = rec.result
+    item = item_from_public(
+        platform="web",
+        language=r.language,
+        claims=r.claims,
+        verdict=r.verdict,
+        confidence=r.confidence,
+        sources=[s.url for s in r.sources],
+    )
+    item.note = clean_note(body.note)
+    await reviews.add(item)
+    return {"status": "queued_for_review", "review_id": item.id}
