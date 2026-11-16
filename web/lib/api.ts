@@ -92,3 +92,12 @@ export async function getJob(id: string): Promise<JobRecord | null> {
 export function cardUrl(id: string): string {
   return `${API_URL}/api/check/${encodeURIComponent(id)}/card.png`;
 }
+
+export async function sendFeedback(id: string, rating: "up" | "down", note = ""): Promise<void> {
+  const res = await fetch(`${API_URL}/api/check/${encodeURIComponent(id)}/feedback`, {
+    method: "POST",
+    body: JSON.stringify({ rating, note }),
+    headers: { "Content-Type": "application/json", "X-Client-Id": clientId() },
+  });
+  if (!res.ok) throw new Error(`Error ${res.status}`);
+}

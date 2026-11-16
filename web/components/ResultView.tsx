@@ -1,7 +1,15 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { cardUrl, getJob, type AISignal, type JobRecord, type Verdict } from "@/lib/api";
+import {
+  cardUrl,
+  getJob,
+  sendFeedback,
+  type AISignal,
+  type JobRecord,
+  type Verdict,
+} from "@/lib/api";
+import { useLabels } from "@/lib/i18n";
 
 const STYLE: Record<Verdict, { emoji: string; band: string }> = {
   true: { emoji: "🟢", band: "bg-verdict-true" },
@@ -23,6 +31,9 @@ export default function ResultView({ id }: { id: string }) {
   const [showMore, setShowMore] = useState(false);
   const [timedOut, setTimedOut] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [feedback, setFeedback] = useState<"none" | "reporting" | "thanks" | "reported">("none");
+  const [note, setNote] = useState("");
+  const t = useLabels();
 
   useEffect(() => {
     let stop = false;
@@ -53,22 +64,22 @@ export default function ResultView({ id }: { id: string }) {
     };
   }, [id]);
 
-  if (missing) return <p>This result has expired or does not exist.</p>;
+  if (missing) return <p>{t.expired}</p>;
   if (!job || job.status === "queued" || job.status === "working") {
     return (
       <div aria-live="polite" className="space-y-3">
-        <p className="text-lg font-medium">🔎 Checking…</p>
+        <p className="text-lg font-medium">{t.checking}</p>
         {job?.messages.slice(-1).map((m) => (
           <p key={m} className="text-slate-600 dark:text-slate-400" dir="auto">
             {m}
           </p>
         ))}
-        {timedOut && <p>This is taking longer than usual. Please refresh in a minute.</p>}
+        {timedOut && <p>{t.slow}</p>}
       </div>
     );
   }
   if (job.status === "failed" || !job.result) {
-    return <p>Sorry, something went wrong while checking this. Please try again.</p>;
+    return <p>{t.failed}</p>;
   }
 
   const r = job.result;
@@ -106,6 +117,15 @@ export default function ResultView({ id }: { id: string }) {
     }
   }
 
+  async function rate(rating: "up" | "down") {
+    try {
+      await sendFeedback(id, rating, rating === "down" ? note : "");
+    } catch {
+      /* feedback is best effort */
+    }
+    setFeedback(rating === "up" ? "thanks" : "reported");
+  }
+
   function listen() {
     const u = new SpeechSynthesisUtterance(`${r.verdict_label}. ${r.explanation}`);
     u.lang = r.language;
@@ -134,7 +154,7 @@ export default function ResultView({ id }: { id: string }) {
         </p>
         {r.needs_human_review && (
           <p className="rounded-lg bg-slate-100 p-3 text-sm dark:bg-slate-800">
-            👥 Our checks did not fully agree, so a person will review this answer.
+            {t.review}
           </p>
         )}
         {r.warnings.length > 0 && (
@@ -153,21 +173,61 @@ export default function ResultView({ id }: { id: string }) {
               {r.correction}
             </p>
             <button onClick={forward} className="rounded-lg bg-slate-900 px-3 py-2 text-sm text-white dark:bg-white dark:text-slate-900">
-              {copied ? "✓ Copied" : "Forward or copy"}
+              {copied ? t.copied : t.forwardCopy}
             </button>
           </section>
         )}
         <div className="flex flex-wrap gap-2">
           <button onClick={share} className="rounded-lg border px-3 py-2 text-sm">
-            🖼 Share as picture
+            {t.sharePicture}
           </button>
           <button onClick={listen} className="rounded-lg border px-3 py-2 text-sm">
-            🔊 Listen
+            {t.listen}
           </button>
           <button onClick={() => setShowMore((v) => !v)} className="rounded-lg border px-3 py-2 text-sm">
-            {showMore ? "Less" : "More: sources & full answer"}
+            {showMore ? t.less : t.more}
           </button>
         </div>
+        <section className="space-y-2 border-t pt-3 text-sm" aria-live="polite">
+          {feedback === "thanks" && <p>{t.thanks}</p>}
+          {feedback === "reported" && <p>{t.reported}</p>}
+          {feedback === "none" && (
+            <div className="flex flex-wrap items-center gap-2">
+              <span>{t.helpful}</span>
+              <button onClick={() => rate("up")} aria-label="👍" className="rounded-lg border px-3 py-1">
+                👍
+              </button>
+              <button
+                onClick={() => setFeedback("reporting")}
+                className="rounded-lg border px-3 py-1"
+              >
+                👎 {t.reportMistake}
+              </button>
+            </div>
+          )}
+          {feedback === "reporting" && (
+            <div className="space-y-2">
+              <label htmlFor="note" className="block">
+                {t.whatWrong}
+              </label>
+              <textarea
+                id="note"
+                value={note}
+                onChange={(e) => setNote(e.target.value)}
+                rows={3}
+                maxLength={2000}
+                dir="auto"
+                className="w-full rounded-lg border border-slate-300 bg-white p-2 dark:border-slate-700 dark:bg-slate-900"
+              />
+              <button
+                onClick={() => rate("down")}
+                className="rounded-lg bg-slate-900 px-3 py-2 text-white dark:bg-white dark:text-slate-900"
+              >
+                {t.send}
+              </button>
+            </div>
+          )}
+        </section>
         {showMore && (
           <div className="space-y-3 border-t pt-3">
             <h2 className="text-sm font-semibold" dir="auto">
@@ -186,11 +246,11 @@ export default function ResultView({ id }: { id: string }) {
                 ))}
               </ol>
             ) : (
-              <p className="text-sm">No trustworthy source was found for this.</p>
+              <p className="text-sm">{t.noSource}</p>
             )}
             {r.ai_signals.length > 0 && (
               <div className="space-y-1 text-sm">
-                <h2 className="font-semibold">AI and editing checks</h2>
+                <h2 className="font-semibold">{t.aiChecks}</h2>
                 <ul className="space-y-1 text-slate-600 dark:text-slate-400">
                   {r.ai_signals.map((sig, i) => (
                     <li key={`${sig.detector}-${i}`}>
@@ -208,7 +268,7 @@ export default function ResultView({ id }: { id: string }) {
                   ))}
                 </ul>
                 <p className="text-xs text-slate-500">
-                  Weak hints are often wrong and are never used on their own.
+                  {t.weakNote}
                 </p>
               </div>
             )}
