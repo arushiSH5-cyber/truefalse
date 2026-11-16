@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>TrueFalse</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <h1>TrueFalse</h1>
+  <form id="form">
+    <label for="text">Message, rumor or link</label>
+    <textarea id="text" rows="5" dir="auto" placeholder="Paste anything you were forwarded…"></textarea>
+    <button type="submit" class="primary" id="go">Check it</button>
+    <button type="button" id="page">Check this page</button>
+  </form>
+  <p id="error" class="error" role="alert"></p>
+  <main id="root"></main>
+  <p class="muted">Tip: right-click any text, link or image to check it. <a href="options.html" target="_blank">Settings</a></p>
+  <script type="module" src="popup.js"></script>
+</body>
+</html>
