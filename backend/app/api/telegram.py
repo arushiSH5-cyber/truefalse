@@ -11,6 +11,7 @@ from app.core.container import build_translator
 from app.core.logging import get_logger
 from app.core.prefs import PrefsStore, RedisPrefsStore
 from app.core.queue import ArqJobQueue
+from app.core.review import RedisReviewStore, ReviewStore
 from app.ingestion.base import JobQueue, Messenger
 from app.ingestion.handler import handle_inbound
 from app.ingestion.telegram import TelegramMessenger, parse_update
@@ -50,6 +51,15 @@ def get_prefs(settings: Annotated[Settings, Depends(get_settings)]) -> PrefsStor
 
 
 @lru_cache
+def _reviews(redis_url: str) -> RedisReviewStore:
+    return RedisReviewStore(redis_url)
+
+
+def get_reviews(settings: Annotated[Settings, Depends(get_settings)]) -> ReviewStore:
+    return _reviews(settings.redis_url)
+
+
+@lru_cache
 def _translator() -> Translator | None:
     return build_translator(get_settings())
 
@@ -67,6 +77,7 @@ async def telegram_webhook(
     queue: Annotated[JobQueue, Depends(get_queue)],
     prefs: Annotated[PrefsStore, Depends(get_prefs)],
     translator: Annotated[Translator | None, Depends(get_translator)],
+    reviews: Annotated[ReviewStore, Depends(get_reviews)],
     secret: Annotated[str | None, Header(alias="X-Telegram-Bot-Api-Secret-Token")] = None,
 ) -> dict[str, Any]:
     expected = settings.telegram_webhook_secret
@@ -81,7 +92,7 @@ async def telegram_webhook(
     if inbound is None:
         return {"ok": True, "result": "ignored"}
     try:
-        result = await handle_inbound(inbound, messenger, queue, prefs, translator)
+        result = await handle_inbound(inbound, messenger, queue, prefs, translator, reviews)
     except Exception as exc:
         # Always 200 to Telegram so it doesn't retry-storm; the failure is logged.
         log.exception("telegram_handle_failed", error=str(exc))

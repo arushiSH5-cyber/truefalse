@@ -2,6 +2,7 @@
 
 from app.core.logging import get_logger
 from app.core.prefs import PrefsStore, UserPrefs
+from app.core.review import ReviewStore, clean_note
 from app.ingestion.base import Inbound, JobQueue, Messenger
 from app.ingestion.common import CHECKING, TEXT_ONLY, WELCOME, say
 from app.language.names import autonym, parse_language_name
@@ -14,6 +15,18 @@ CHECK_JOB = "check_submission"
 LANGUAGE_SET = "✅ {name} ✔"
 VOICE_ON = "🔊 Voice replies: ON. Send /voice again to turn them off."
 VOICE_OFF = "🔇 Voice replies: OFF. Send /voice to turn them on."
+DIGEST_ON = (
+    "🗞 Weekly digest: ON. Every week I'll send you the false claims people forwarded most. "
+    "Send /digest again to stop."
+)
+DIGEST_OFF = "🗞 Weekly digest: OFF. I deleted your subscription."
+REPORT_THANKS = (
+    "🙏 Thanks. A person will review my last answer to you. "
+    "Add details next time with /wrong followed by what was wrong."
+)
+REPORT_NOTHING = (
+    "I have no recent answer to report. Send /wrong right after an answer you think is wrong."
+)
 LANGUAGE_AUTO = (
     "🌐 I'll reply in the language you write in. "
     "Send a language name (e.g. Español, हिंदी, العربية) to choose one."
@@ -26,6 +39,7 @@ async def handle_inbound(
     queue: JobQueue,
     prefs_store: PrefsStore | None = None,
     translator: Translator | None = None,
+    reviews: ReviewStore | None = None,
 ) -> str:
     """Returns what happened, for logs and tests."""
     user = inbound.submission.user_hash
@@ -51,6 +65,27 @@ async def handle_inbound(
         await prefs_store.save(prefs)
         await reply(LANGUAGE_AUTO)
         return "language_auto"
+    if inbound.command == "digest" and prefs_store:
+        prefs.digest_opt_in = not prefs.digest_opt_in
+        if prefs.digest_opt_in:
+            # Consent: the chat address is kept only while subscribed.
+            prefs.digest_target = inbound.target.model_copy(update={"reply_to_message_id": None})
+            prefs.digest_language = hint
+        else:
+            prefs.digest_target = prefs.digest_language = None
+        await prefs_store.save(prefs)
+        await reply(DIGEST_ON if prefs.digest_opt_in else DIGEST_OFF)
+        return "digest_toggled"
+    if inbound.command in ("wrong", "report") and reviews:
+        item = await reviews.take_recent(user)
+        if item is None:
+            await reply(REPORT_NOTHING)
+            return "report_nothing"
+        item.note = clean_note(inbound.command_args)
+        await reviews.add(item)
+        await reviews.count_feedback("down")
+        await reply(REPORT_THANKS)
+        return "reported"
     if inbound.command is not None:
         return "ignored_command"
     if inbound.has_unsupported_media:

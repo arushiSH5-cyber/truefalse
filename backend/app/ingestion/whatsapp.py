@@ -44,11 +44,14 @@ def _message_to_inbound(msg: dict[str, Any], salt: str) -> Inbound | None:
     mtype = msg.get("type")
     parts: list[Part] = []
     command = None
+    command_args = ""
     unsupported = False
     if mtype == "text":
         body = (msg.get("text") or {}).get("body", "").strip()
         if body.startswith("/"):
-            command = body.split()[0][1:].lower()
+            head, _, command_args = body.partition(" ")
+            command = head[1:].lower()
+            command_args = command_args.strip()
         elif body:
             parts.append(Part(kind=PartKind.TEXT, text=body))
     elif mtype in _KINDS:
@@ -82,6 +85,7 @@ def _message_to_inbound(msg: dict[str, Any], salt: str) -> Inbound | None:
             platform=Platform.WHATSAPP, chat_id=sender, reply_to_message_id=msg.get("id")
         ),
         command=command,
+        command_args=command_args,
         has_unsupported_media=unsupported and not parts,
     )
 

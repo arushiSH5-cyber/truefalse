@@ -52,6 +52,14 @@ class Settings(BaseSettings):
     web_checks_per_hour: int = Field(default=20, ge=1)  # per anonymous client
     share_card_font_dir: str = "/usr/share/fonts/truetype/noto"
 
+    # Human review queue + feedback. Reviewers call /api/review with
+    # "Authorization: Bearer <REVIEW_TOKEN>"; unset = review endpoints off (503).
+    review_token: SecretStr | None = None
+    # Weekly digest of the most-forwarded false claims, for bot users who send /digest.
+    digest_enabled: bool = True
+    digest_weekday: int = Field(default=0, ge=0, le=6)  # 0 = Monday (UTC)
+    digest_hour_utc: int = Field(default=9, ge=0, le=23)
+
     # Research sources
     google_factcheck_api_key: SecretStr | None = None
     semantic_scholar_api_key: SecretStr | None = None
