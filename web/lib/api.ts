@@ -1,3 +1,5 @@
+import { DEMO, demoJob } from "@/lib/demo";
+
 export type Verdict = "true" | "misleading" | "false" | "unverified";
 
 export interface PublicSource {
@@ -83,6 +85,7 @@ export async function submitCheck(form: FormData): Promise<string> {
 }
 
 export async function getJob(id: string): Promise<JobRecord | null> {
+  if (DEMO) return demoJob(id);
   const res = await fetch(`${API_URL}/api/check/${encodeURIComponent(id)}`, { cache: "no-store" });
   if (res.status === 404) return null;
   if (!res.ok) throw new Error(`Error ${res.status}`);
@@ -94,6 +97,7 @@ export function cardUrl(id: string): string {
 }
 
 export async function sendFeedback(id: string, rating: "up" | "down", note = ""): Promise<void> {
+  if (DEMO) return;
   const res = await fetch(`${API_URL}/api/check/${encodeURIComponent(id)}/feedback`, {
     method: "POST",
     body: JSON.stringify({ rating, note }),

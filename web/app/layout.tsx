@@ -2,11 +2,13 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import ServiceWorker from "@/components/ServiceWorker";
 
+const BASE = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
+
 export const metadata: Metadata = {
   title: "TrueFalse",
   description: "Check forwarded messages, photos, voice notes, videos and links, in any language.",
-  manifest: "/manifest.webmanifest",
-  icons: { icon: "/icon-192.png", apple: "/icon-192.png" },
+  manifest: `${BASE}/manifest.webmanifest`,
+  icons: { icon: `${BASE}/icon-192.png`, apple: `${BASE}/icon-192.png` },
 };
 
 export const viewport: Viewport = {

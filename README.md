@@ -10,6 +10,9 @@ note, a video or a link, in any language, and it replies in your language with:
 It never gives a verdict without a real source. If the evidence is thin or unclear, the answer
 is Unverified.
 
+**Try the demo:** https://arushiSH5-cyber.github.io/truefalse/ (example answers only; run it
+yourself to check your own messages)
+
 ## Where you can use it
 
 - Telegram bot

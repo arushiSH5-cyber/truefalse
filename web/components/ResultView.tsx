@@ -9,6 +9,7 @@ import {
   type JobRecord,
   type Verdict,
 } from "@/lib/api";
+import { DEMO } from "@/lib/demo";
 import { useLabels } from "@/lib/i18n";
 
 const STYLE: Record<Verdict, { emoji: string; band: string }> = {
@@ -178,9 +179,11 @@ export default function ResultView({ id }: { id: string }) {
           </section>
         )}
         <div className="flex flex-wrap gap-2">
-          <button onClick={share} className="rounded-lg border px-3 py-2 text-sm">
-            {t.sharePicture}
-          </button>
+          {!DEMO && (
+            <button onClick={share} className="rounded-lg border px-3 py-2 text-sm">
+              {t.sharePicture}
+            </button>
+          )}
           <button onClick={listen} className="rounded-lg border px-3 py-2 text-sm">
             {t.listen}
           </button>
