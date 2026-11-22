@@ -216,6 +216,17 @@ async def _check_claims(
     return evidence, decisions
 
 
+def reply_language_name(extraction: Extraction, reply_language: str | None) -> str:
+    """The reply language for the compose prompt, with the script the person wrote in."""
+    if reply_language:  # chosen with /language: no script to copy
+        return english_name(reply_language)
+    if extraction.romanized_or_mixed:
+        return f"{extraction.language_name}, romanized or mixed like the message"
+    if extraction.script:
+        return f"{extraction.language_name}, written in {extraction.script} script"
+    return extraction.language_name
+
+
 async def run_check(
     submission: Submission,
     deps: Deps,
@@ -339,7 +350,7 @@ async def _run(
         reply = await compose(
             deps.llm,
             language=language,
-            language_name=(english_name(language) if reply_language else extraction.language_name),
+            language_name=reply_language_name(extraction, reply_language),
             verdict=overall,
             confidence=confidence,
             explanation_en=explanation,

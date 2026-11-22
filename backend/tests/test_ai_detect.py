@@ -351,7 +351,8 @@ def test_parse_web_detection() -> None:
 async def test_recycled_photo_found_and_pages_become_evidence(fake_dns, tmp_path) -> None:  # noqa: F811
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.host == "vision.googleapis.com":
-            assert request.url.params["key"] == "k"
+            assert request.headers["x-goog-api-key"] == "k"
+            assert "key" not in request.url.params
             return httpx.Response(200, json=VISION)
         if request.url.host == "news.example.com":
             return httpx.Response(200, content=OLD_ARTICLE)

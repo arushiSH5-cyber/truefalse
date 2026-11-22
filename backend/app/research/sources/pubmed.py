@@ -21,7 +21,7 @@ class PubMedSource:
         self, client: httpx.AsyncClient, api_key: str | None = None, max_results: int = 5
     ) -> None:
         self._client = client
-        self._common = {"tool": "truefalse"} | ({"api_key": api_key} if api_key else {})
+        self._common = {"tool": "fact-check-client"} | ({"api_key": api_key} if api_key else {})
         self._max = max_results
 
     async def search(self, query: str, language: str | None = None) -> list[EvidenceDraft]:

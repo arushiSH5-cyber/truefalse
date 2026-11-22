@@ -32,6 +32,8 @@ class Settings(BaseSettings):
     # Send reasoning_effort to OpenAI (needs a reasoning model); turn off for other models
     openai_reasoning_effort: bool = True
     gemini_api_key: SecretStr | None = None
+    # Main engine when there is no Anthropic key. Tried in order when one is busy or used up.
+    gemini_models: str = "gemini-3.5-flash-lite,gemini-4-hydrogen,gemini-3.1-flash-lite"
     # Server-side refusal fallback (reroutes a declined request to another model in-call)
     llm_use_fallbacks: bool = True
     # USD per million tokens, for cost metrics only
