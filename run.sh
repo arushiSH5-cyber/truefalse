@@ -4,6 +4,10 @@
 #   ./run.sh --phone   also reachable from phones on the same Wi-Fi
 #   ./run.sh --share   a public https link anyone can open, while this runs (needs cloudflared)
 set -euo pipefail
+
+# Everything is inside main(), so bash reads the whole file before running any of it. Then
+# updating this file (git pull, switching branches) can't break a copy that is already running.
+main() {
 cd "$(dirname "$0")"
 
 WEB_PORT=3200
@@ -89,3 +93,7 @@ while kill -0 "$API" 2>/dev/null && kill -0 "$WEB" 2>/dev/null; do
   sleep 1
 done
 echo "TrueFalse stopped."
+}
+
+main "$@"
+exit
