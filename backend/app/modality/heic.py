@@ -1,7 +1,8 @@
 """HEIC/HEIF photos (iPhone's default format), decoded with ffmpeg because Pillow can't read them.
 
-iPhone photos are stored as a grid of 512 px tiles. ffmpeg 8+ joins them; older versions return
-a single tile, so the output size is checked and a partial photo is never passed on as the photo.
+iPhone photos are stored as a grid of 512 px tiles. Some ffmpeg builds join them (8.1 on macOS
+does); others return a single tile, so the output size is checked and a partial photo is never
+passed on as the photo.
 """
 
 from pathlib import Path
@@ -75,5 +76,5 @@ async def readable_image(path: Path) -> Path:
         raise HeicError("ffmpeg could not decode the HEIC file") from exc
     # Sorted, because a rotated photo swaps width and height.
     if any(abs(a - b) > SIZE_TOLERANCE for a, b in zip(got, sorted(size), strict=True)):
-        raise HeicError(f"decoded {got}, expected {size}: ffmpeg 8+ is needed for tiled HEIC")
+        raise HeicError(f"decoded {got}, expected {size}: this ffmpeg can't join HEIC tiles")
     return out

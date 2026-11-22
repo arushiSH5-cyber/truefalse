@@ -25,7 +25,7 @@ demo shows saved example answers. To check your own messages, run it on your lap
 
 ## Run it on your laptop
 
-You need [Node](https://nodejs.org), [uv](https://docs.astral.sh/uv/) and ffmpeg
+You need [Node](https://nodejs.org), [uv](https://docs.astral.sh/uv/) and ffmpeg (for voice, video and iPhone photos)
 (`brew install node uv ffmpeg`), plus a free [Gemini API key](https://aistudio.google.com/apikey).
 
 ```bash
