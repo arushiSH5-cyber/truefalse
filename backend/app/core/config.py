@@ -52,6 +52,8 @@ class Settings(BaseSettings):
     # Web app / PWA / extension (Phase 7)
     web_origins: str = "http://localhost:3000"  # comma-separated CORS origins
     web_checks_per_hour: int = Field(default=20, ge=1)  # per anonymous client
+    # Local mode, all clients together, per day (UTC). Keeps a public link from using up the key.
+    daily_check_limit: int = Field(default=100, ge=1)
     share_card_font_dir: str = "/usr/share/fonts/truetype/noto"
 
     # Human review queue + feedback. Reviewers call /api/review with
