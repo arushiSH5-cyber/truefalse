@@ -34,7 +34,11 @@ python3 scripts/set_key.py    # copy your key first; saves it into .env without 
 ./run.sh                      # opens on http://localhost:3200
 ```
 
-Use `./run.sh --phone` to open it on a phone on the same Wi-Fi.
+To share it with anyone (a class, a demo), run `./run.sh --share`. It prints a public link that
+works on any phone, with uploads and real answers, while that window stays open. It allows up to
+100 checks a day in total, so a shared link can't use up your key (`DAILY_CHECK_LIMIT` in `.env`).
+
+Use `./run.sh --phone` to open it on a phone on the same Wi-Fi instead.
 
 ## What's in here
 

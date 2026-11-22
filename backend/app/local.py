@@ -11,6 +11,7 @@ import asyncio
 import contextlib
 import time
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -38,6 +39,7 @@ ENV_FILE = Path(__file__).resolve().parents[2] / ".env"
 USER_AGENT = "Mozilla/5.0 (compatible; fact-check-client/1.0)"
 CHECK_TIMEOUT_S = 300
 MAX_WAITING = 10
+DAILY_LIMIT = "TrueFalse has used today's free checks. Please try again tomorrow."
 NO_KEY = "TrueFalse has no AI key yet. Run python3 scripts/set_key.py, then try again."
 
 
@@ -167,17 +169,36 @@ class Status(BaseModel):
     searches: list[str]  # names only, never key values
 
 
-def create_local_app() -> FastAPI:
+class DailyLimit:
+    """All checks today, from anyone. A client id is free to invent; this count isn't."""
+
+    def __init__(self) -> None:
+        self._day = ""
+        self._used = 0
+
+    def take(self, limit: int) -> bool:
+        today = datetime.now(UTC).date().isoformat()
+        if today != self._day:
+            self._day, self._used = today, 0
+        if self._used >= limit:
+            return False
+        self._used += 1
+        return True
+
+
+def create_local_app(queue: Any = None) -> FastAPI:
     app = create_app()
     jobs = ExpiringJobStore()
     limiter = InMemoryRateLimiter()
+    daily = DailyLimit()
     http = httpx.AsyncClient(timeout=10, headers={"User-Agent": USER_AGENT}, follow_redirects=True)
     runner = LocalRunner(http, jobs)
+    queue = queue or runner  # tests pass a fake queue
 
     app.dependency_overrides.update(
         {
             get_settings: load_settings,
-            telegram.get_queue: lambda: runner,
+            telegram.get_queue: lambda: queue,
             telegram.get_reviews: lambda: runner.reviews,
             web.get_jobs: lambda: jobs,
             web.get_limiter: lambda: limiter,
@@ -189,10 +210,13 @@ def create_local_app() -> FastAPI:
     async def refuse_early(request: Request, call_next: Any) -> Response:
         if request.method == "POST" and request.url.path == "/api/check":
             problem = None
-            if engine_name(load_settings()) is None:
+            settings = load_settings()
+            if engine_name(settings) is None:
                 problem = HTTPException(503, NO_KEY)
-            elif runner.full:
+            elif queue.full:
                 problem = HTTPException(503, "TrueFalse is busy. Try again in a minute.")
+            elif not daily.take(settings.daily_check_limit):
+                problem = HTTPException(503, DAILY_LIMIT)
             if problem:
                 return Response(
                     f'{{"detail":"{problem.detail}"}}',

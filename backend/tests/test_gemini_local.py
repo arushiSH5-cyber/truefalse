@@ -147,3 +147,25 @@ def test_local_mode_without_a_key_says_so(monkeypatch, tmp_path) -> None:
         assert res.status_code == 503 and "set_key.py" in res.json()["detail"]
         env.write_text("GEMINI_API_KEY=made-up\n")  # picked up without a restart
         assert client.get("/api/status").json()["engine"] == "gemini"
+
+
+def test_daily_limit_protects_the_key_on_a_public_link(monkeypatch, tmp_path) -> None:
+    monkeypatch.delenv("DAILY_CHECK_LIMIT", raising=False)
+    env = tmp_path / ".env"
+    env.write_text("GEMINI_API_KEY=made-up\nDAILY_CHECK_LIMIT=2\nWEB_CHECKS_PER_HOUR=99\n")
+    monkeypatch.setattr(local, "ENV_FILE", env)
+
+    class Queue:
+        full = False
+
+        async def enqueue(self, function: str, payload: dict) -> None:
+            pass
+
+    with TestClient(local.create_local_app(queue=Queue())) as client:
+        codes = [
+            client.post(
+                "/api/check", data={"text": "x"}, headers={"X-Client-Id": f"someone-{i:04d}"}
+            ).status_code
+            for i in range(3)
+        ]
+    assert codes == [202, 202, 503]  # a new client id per request doesn't get around it
