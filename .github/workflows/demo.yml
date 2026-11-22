@@ -32,6 +32,8 @@ jobs:
       - run: npm ci
       # The share target is a server route; a static site can't have one.
       - run: rm -rf app/share
+      - name: Drop the share target from the manifest
+        run: node -e 'const fs=require("fs"),f="public/manifest.webmanifest",m=JSON.parse(fs.readFileSync(f,"utf8"));delete m.share_target;fs.writeFileSync(f,JSON.stringify(m,null,2))'
       - run: npx next build
         env:
           NEXT_PUBLIC_DEMO: "1"

@@ -115,7 +115,24 @@ limits and file locations per item are in [GAP_ANALYSIS.md](GAP_ANALYSIS.md) §6
 - **Chrome extension** (`extension/`): right-click text, links, images or pages to check them.
 - MIT license; simpler README.
 
+### Bug fixes (2026-11-22)
+- Extension: `activeTab` (fixes "Check this page", allows tab capture); selections send only the
+  selected text; image links are downloaded and read as images by the backend.
+- HEIC photos are decoded with ffmpeg 8+ (`modality/heic.py`).
+- Every claim shows its own verdict; the share card quotes the claim its verdict is about.
+- Feedback shows failures; privacy notes state what is sent and how long it is kept.
+
+### Redesign and local mode (2026-11-22)
+- New web design: original verdict buddies and doodles (`scripts/make_doodles.py`), Fredoka + Nunito,
+  day/night themes, receipt results, camera, voice notes, history on the device, installable PWA.
+  The extension and share card use the same look.
+- Gemini can run the whole pipeline (`core/gemini.py`), including voice transcription.
+- `./run.sh`: local mode without Docker, Redis or Postgres (`app/local.py`).
+- Wikipedia is the keyless general search when there is no Brave key.
+
 ## Blockers / notes
+- HEIC needs ffmpeg 8+. The Docker image (and possibly CI) has an older one: there the user is told to
+  send a JPEG or screenshot, and the decode tests skip. `pillow-heif` would remove this limit.
 - **Not yet run against real APIs.** Every external call is tested only against fakes and saved
   sample responses. The first live run needs `ANTHROPIC_API_KEY` (and ideally
   `GOOGLE_FACTCHECK_API_KEY`, a Brave `SEARCH_API_KEY` and a bot token). Without the Anthropic
