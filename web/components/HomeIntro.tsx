@@ -1,26 +1,47 @@
 "use client";
 
+import Doodle from "@/components/Doodle";
 import { useLabels } from "@/lib/i18n";
+import { VERDICTS } from "@/lib/verdicts";
 
 export function HomeIntro() {
   const t = useLabels();
   return (
-    <header className="space-y-2">
-      <h1 className="text-3xl font-bold">TrueFalse</h1>
-      <p className="text-slate-600 dark:text-slate-400">{t.intro}</p>
-      <p className="text-sm">
-        <span className="mr-2">🟢 {t.verdictTrue}</span>
-        <span className="mr-2">🟠 {t.verdictMisleading}</span>
-        <span className="mr-2">🔴 {t.verdictFalse}</span>
-        <span>⚪ {t.verdictUnverified}</span>
-      </p>
-    </header>
+    <section className="hero">
+      <div>
+        <h1 className="title">{t.headline}</h1>
+        <p className="hand soft mt-2">{t.subline}</p>
+      </div>
+      <Doodle name="scout-think" size={170} />
+    </section>
+  );
+}
+
+export function Legend() {
+  const t = useLabels();
+  return (
+    <ul className="legend">
+      {Object.entries(VERDICTS).map(([verdict, v]) => (
+        <li key={verdict}>
+          <span className={`sticker ${v.pattern}`}>
+            <Doodle name={v.buddy} size={80} />
+          </span>
+          {t[v.label]}
+        </li>
+      ))}
+    </ul>
   );
 }
 
 export function HomeTip() {
   const t = useLabels();
-  return <p className="text-xs text-slate-500">{t.tip}</p>;
+  return (
+    <details className="small soft">
+      <summary className="cursor-pointer py-2 font-bold">{t.privacyTitle}</summary>
+      <p dir="auto">{t.privacy}</p>
+      <p dir="auto">{t.freeTier}</p>
+    </details>
+  );
 }
 
 export function BackLink() {

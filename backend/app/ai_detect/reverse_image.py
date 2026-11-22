@@ -80,7 +80,7 @@ class ReverseImageSearch:
                 }
             ]
         }
-        resp = await self._http.post(VISION_URL, params={"key": self._key}, json=body)
+        resp = await self._http.post(VISION_URL, headers={"x-goog-api-key": self._key}, json=body)
         resp.raise_for_status()
         result: dict[str, Any] = resp.json()
         return result

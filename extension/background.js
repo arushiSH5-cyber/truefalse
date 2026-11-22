@@ -1,6 +1,6 @@
 // Right-click menu: check the selected text, a link, an image or the whole page.
 
-import { openResult, submitCheck } from "./api.js";
+import { explainError, isWebUrl, openResult, submitCheck } from "./api.js";
 
 const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
 
@@ -13,7 +13,10 @@ chrome.runtime.onInstalled.addListener(() => {
   });
 });
 
-/** Download the image so the backend can read it; null if the site doesn't allow it. */
+/**
+ * Download the image so the backend can read it; null if the site doesn't allow it.
+ * activeTab covers the page's own origin, not CDNs: for those the backend fetches the link.
+ */
 async function fetchImage(src) {
   try {
     const res = await fetch(src);
@@ -27,10 +30,18 @@ async function fetchImage(src) {
   }
 }
 
+function imageLink(src) {
+  if (isWebUrl(src)) return { url: src };
+  throw new Error(
+    "Chrome won't let TrueFalse read this image. Take a screenshot of it and upload it in the web app."
+  );
+}
+
 async function inputFor(info, tab) {
   switch (info.menuItemId) {
     case "selection":
-      return { text: info.selectionText, url: tab?.url };
+      // Not the page URL: the backend would read the whole article and check that instead.
+      return { text: info.selectionText };
     case "link":
       return { url: info.linkUrl };
     case "image":
@@ -38,9 +49,12 @@ async function inputFor(info, tab) {
         const blob = await (await fetch(info.srcUrl)).blob();
         return { file: blob, filename: "image" };
       }
-      return (await fetchImage(info.srcUrl)) ?? { url: info.srcUrl };
-    default:
-      return { url: info.pageUrl || tab?.url };
+      return (await fetchImage(info.srcUrl)) ?? imageLink(info.srcUrl);
+    default: {
+      const url = info.pageUrl || tab?.url;
+      if (!isWebUrl(url)) throw new Error("TrueFalse can only check http and https pages.");
+      return { url };
+    }
   }
 }
 
@@ -59,9 +73,6 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
     const id = await submitCheck(await inputFor(info, tab));
     await openResult(id);
   } catch (err) {
-    await showError(
-      `${err instanceof Error ? err.message : err}. Is the TrueFalse server running? ` +
-        "Set its address in the extension options."
-    );
+    await showError(explainError(err));
   }
 });

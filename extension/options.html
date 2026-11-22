@@ -6,11 +6,12 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <h1>TrueFalse settings</h1>
+  <h1><img src="doodles/scout-think.svg" width="56" height="56" alt="">TrueFalse settings</h1>
   <form id="form">
     <label for="api">TrueFalse server address</label>
     <input id="api" type="url" required placeholder="http://localhost:8000">
-    <p class="muted">The backend you run (see the project README). The extension sends what you choose to check only to this address.</p>
+    <p class="muted">The backend you run (see the project README).</p>
+    <p class="muted privacy">What you check goes to your TrueFalse server, which uses AI, search and fact-checking services. Uploads are deleted within 15 minutes. Messages and answers are kept up to 24 hours, checked claims and reports up to 30 days. Image fingerprints (not the images) are kept with no end date. With Gemini's free tier, Google may also use what you send to improve its products.</p>
     <button type="submit" class="primary">Save</button>
   </form>
   <p id="status" role="status"></p>

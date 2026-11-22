@@ -30,6 +30,7 @@ router = APIRouter(prefix="/api", tags=["web"])
 
 MEDIA_KINDS = {"image": PartKind.IMAGE, "audio": PartKind.AUDIO, "video": PartKind.VIDEO}
 MAX_TEXT = 10_000
+HEIC_SUFFIXES = (".heic", ".heif")
 
 
 @lru_cache
@@ -83,6 +84,9 @@ async def create_check(
         parts.append(Part(kind=PartKind.TEXT, text=combined))
     if file is not None and file.filename:
         kind = MEDIA_KINDS.get((file.content_type or "").split("/")[0])
+        # Chrome and Windows often send HEIC with no type or application/octet-stream.
+        if kind is None and file.filename.lower().endswith(HEIC_SUFFIXES):
+            kind = PartKind.IMAGE
         if kind is None:
             raise HTTPException(415, "Send an image, audio or video file.")
         data = await file.read(MAX_UPLOAD_BYTES + 1)
@@ -134,7 +138,7 @@ async def share_card(
         render_card,
         verdict=r.verdict,
         verdict_label=r.verdict_label,
-        claim=r.claims[0] if r.claims else "",
+        claim=r.headline_claim(),
         explanation=r.explanation,
         source=(top.publisher or top.url) if top else None,
         font_dir=Path(settings.share_card_font_dir),

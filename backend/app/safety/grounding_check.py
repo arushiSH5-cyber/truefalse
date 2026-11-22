@@ -5,7 +5,9 @@ Two layers:
    is dropped (invented statistics are the most common hallucination).
 2. LLM: each sentence is checked against the cited evidence; unsupported sentences are dropped.
 
-If nothing survives, a template explanation built only from evidence metadata is used.
+If the check finds that nothing is supported, the verdict becomes Unverified: a citation that
+doesn't back the answer is no citation. If the check itself fails, a template explanation built
+only from evidence metadata is used.
 """
 
 import json
@@ -15,13 +17,17 @@ from collections.abc import Sequence
 from app.core import prompts
 from app.core.llm import LLMClient
 from app.core.logging import get_logger
-from app.core.models import ClaimDecision, Evidence, GroundingOutput, Verdict
+from app.core.models import ClaimDecision, Confidence, Evidence, GroundingOutput, Verdict
 
 log = get_logger(__name__)
 
 # Latin-style punctuation needs a following space; CJK, Devanagari danda and Arabic do not.
 _SENTENCE = re.compile(r"(?<=[.!?])\s+|(?<=[。！？।؟])\s*")
 _NUMBER = re.compile(r"\d+(?:[.,]\d+)*")
+
+NOT_BACKED_EXPLANATION = (
+    "We found some sources, but none of them says enough about this claim to give a safe answer."
+)
 
 VERDICT_WORDS = {
     Verdict.TRUE: "true",
@@ -110,6 +116,18 @@ async def ground(
         total = len(split_sentences(j.explanation)) or 1
         kept = supported.get(j.claim_index, [])
         cited = [evidence[e] for e in j.cited_evidence_ids if e in evidence]
+        if j.claim_index in supported and not kept:
+            log.info("verdict_not_backed", claim_index=j.claim_index)
+            unbacked = j.model_copy(
+                update={
+                    "verdict": Verdict.UNVERIFIED,
+                    "confidence": Confidence.LOW,
+                    "explanation": NOT_BACKED_EXPLANATION,
+                    "cited_evidence_ids": [],
+                }
+            )
+            result.append(d.model_copy(update={"judgement": unbacked, "grounded_ratio": 0.0}))
+            continue
         text = " ".join(kept) if kept else template_explanation(j.verdict, cited)
         result.append(
             d.model_copy(

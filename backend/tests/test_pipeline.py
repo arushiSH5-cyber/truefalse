@@ -62,7 +62,7 @@ async def test_false_health_claim_full_flow(
     assert report.reply_text.index(pubmed_draft.url) < report.reply_text.index(factcheck_draft.url)
     assert "🩺" in report.reply_text
     compose_call = next(c for c in llm.calls if c["stage"] == "compose")
-    assert "Target language: es (Spanish)" in compose_call["user"]
+    assert "Target language: es (Spanish, written in Latin script)" in compose_call["user"]
     assert "not doctors" in compose_call["user"]  # health note passed for translation
     assert "could harm" in compose_call["user"]  # danger note for harmful false claim
     assert set(trace.stages) == {

@@ -10,6 +10,10 @@ const nextConfig = {
   ...(demo
     ? {}
     : {
+        async rewrites() {
+          const api = process.env.API_URL ?? "http://127.0.0.1:8000";
+          return [{ source: "/backend/api/:path*", destination: `${api}/api/:path*` }];
+        },
         async headers() {
           return [{ source: "/sw.js", headers: [{ key: "Cache-Control", value: "no-cache" }] }];
         },

@@ -22,6 +22,7 @@ from app.core.models import EvidenceDraft, Part, PartKind, Platform, Submission
 from app.modality.audio import chunk_segments, fmt_time, render_chunks, select_claim_chunks
 from app.modality.base import SpeechToText
 from app.modality.hashes import ImageHashStore, SeenImage
+from app.modality.heic import HeicError, readable_image
 from app.modality.image import (
     ImageAnalysis,
     ImageKind,
@@ -33,7 +34,7 @@ from app.modality.links import (
     LinkContent,
     YtDlpDownloader,
     classify,
-    fetch_article,
+    fetch_page_or_image,
     fetch_preview,
     fetch_thumbnail,
     fetch_x_post,
@@ -102,6 +103,7 @@ class _Acc:
 W_EDITED = "The picture or video may have been edited."
 W_TRANSCRIBED = "We turned the audio into text automatically, so small mistakes are possible."
 W_MEDIA_FAILED = "We could not open part of what you sent, so we checked only the rest."
+W_HEIC_FAILED = "We could not open this HEIC photo. Please send a screenshot of it, or a JPEG copy."
 W_UNSUPPORTED = "This kind of file can't be checked on this server yet."
 W_PREVIEW_ONLY = (
     "We could only see the public preview of this post (its caption and picture), "
@@ -122,13 +124,19 @@ async def _no_ai() -> tuple[list[AISignal], list[EvidenceDraft]]:
 
 async def _images(paths: Sequence[Path], p: MediaProviders, acc: _Acc) -> None:
     for path in list(paths)[:MAX_IMAGES]:
-        await _remember(path, p, acc)
-        tiles = image_tiles(path)
+        try:
+            readable = await readable_image(path)
+        except HeicError as exc:
+            log.warning("heic_failed", error=str(exc))
+            acc.warn(W_HEIC_FAILED)
+            continue
+        await _remember(readable, p, acc)
+        tiles = image_tiles(readable)
         kind: ImageKind = "slices" if len(tiles) > 1 else "image"
-        # AI checks read the original file (credentials, metadata), so they run on `path`.
+        # Credentials and metadata are read from the original file, pixels from the readable copy.
         a, (signals, seed) = await asyncio.gather(
             analyze_images(p.llm, tiles, kind),
-            p.ai.check_image(path) if p.ai else _no_ai(),
+            p.ai.check_image(path, readable) if p.ai else _no_ai(),
         )
         acc.ai += signals
         acc.seed += seed
@@ -235,13 +243,17 @@ async def _link(url: str, workdir: Path, p: MediaProviders, acc: _Acc, hint: str
     elif kind == "post":
         content = await fetch_x_post(p.http, url)
     else:
-        content = await fetch_article(p.http, url)
+        content = await fetch_page_or_image(p.http, url, workdir / f"{uuid4().hex}.img")
+        if content.kind == "article" and not (content.title or content.text.strip()):
+            acc.warn(W_MEDIA_FAILED)
     label = {"preview": "post (preview only)"}.get(content.kind, content.kind)
     header = f"[Linked {label}{': ' + content.title if content.title else ''}"
     header += f" by {content.uploader}" if content.uploader else ""
     header += f", published {content.published}" if content.published else ""
     acc.texts.append(f"{header}]\n{content.text}".strip())
-    if content.media_path:
+    if content.kind == "image" and content.media_path:
+        await _images([Path(content.media_path)], p, acc)
+    elif content.media_path:
         media = Path(content.media_path)
         if media.suffix.lower() in {".mp4", ".webm", ".mkv", ".mov"}:
             await _video(media, workdir, p, acc, hint)
@@ -294,7 +306,9 @@ async def process_submission(
             await _link(url, workdir, p, acc, hint)
         except Exception as exc:
             log.warning(
-                "link_failed", host=url.split("/")[2] if "//" in url else "", error=str(exc)
+                "link_failed",
+                host=url.split("/")[2] if "//" in url else "",
+                error=type(exc).__name__,  # str(exc) would repeat the person's link
             )
             acc.warn(W_MEDIA_FAILED)
 

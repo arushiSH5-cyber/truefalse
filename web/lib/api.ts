@@ -22,6 +22,11 @@ export interface AISignal {
   source_url: string | null;
 }
 
+export interface PublicClaim {
+  claim: string;
+  verdict: Verdict;
+}
+
 export interface PublicResult {
   verdict: Verdict;
   verdict_label: string;
@@ -38,6 +43,8 @@ export interface PublicResult {
   warnings: string[];
   sources: PublicSource[];
   claims: string[];
+  /** Each claim's own verdict, same order as `claims`. Missing on results from older servers. */
+  claim_results?: PublicClaim[];
   needs_human_review: boolean;
   ai_overall: AIOverall;
   /** Every AI-content check result, weak hints included (shown under "More" only). */
@@ -51,8 +58,14 @@ export interface JobRecord {
   result: PublicResult | null;
 }
 
-export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+// Same origin by default (next.config rewrites /backend to the API), so a phone on your Wi-Fi works.
+export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "/backend";
 export const CLIENT_COOKIE = "tf_cid";
+
+/** crypto.randomUUID only exists on HTTPS and localhost; a phone testing over Wi-Fi has neither. */
+function randomId(): string {
+  return Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, "0")).join("");
+}
 
 /** Random anonymous id (no personal data). Mirrored into a cookie for the share target. */
 export function clientId(): string {
@@ -61,11 +74,11 @@ export function clientId(): string {
   try {
     id = localStorage.getItem(key);
     if (!id) {
-      id = crypto.randomUUID().replace(/-/g, "");
+      id = randomId();
       localStorage.setItem(key, id);
     }
   } catch {
-    id = crypto.randomUUID().replace(/-/g, "");
+    id = randomId();
   }
   document.cookie = `${CLIENT_COOKIE}=${id}; path=/; max-age=31536000; samesite=lax`;
   return id;
@@ -90,6 +103,18 @@ export async function getJob(id: string): Promise<JobRecord | null> {
   if (res.status === 404) return null;
   if (!res.ok) throw new Error(`Error ${res.status}`);
   return (await res.json()) as JobRecord;
+}
+
+/** Local mode reports whether it has an AI key. Other deployments don't have this route. */
+export async function getStatus(): Promise<"ok" | "no-key" | "down"> {
+  try {
+    const res = await fetch(`${API_URL}/api/status`, { cache: "no-store" });
+    if (res.status === 404) return "ok";
+    if (!res.ok) return "down";
+    return (await res.json()).ready ? "ok" : "no-key";
+  } catch {
+    return "down";
+  }
 }
 
 export function cardUrl(id: string): string {

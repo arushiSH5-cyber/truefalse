@@ -23,10 +23,12 @@ class GoogleFactCheckSource:
         self._max = max_results
 
     async def search(self, query: str, language: str | None = None) -> list[EvidenceDraft]:
-        params: dict[str, Any] = {"query": query, "pageSize": self._max, "key": self._key}
+        params: dict[str, Any] = {"query": query, "pageSize": self._max}
         if language:
             params["languageCode"] = language
-        data = await get_json(self._client, URL, params=params)
+        data = await get_json(
+            self._client, URL, params=params, headers={"x-goog-api-key": self._key}
+        )
         return parse(data)
 
 

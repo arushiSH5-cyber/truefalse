@@ -5,6 +5,9 @@
  */
 import { NextResponse, type NextRequest } from "next/server";
 
+// Relative Location: behind a proxy or on a phone, req.url's host is not the one the user typed.
+const seeOther = (location: string) => new NextResponse(null, { status: 303, headers: { location } });
+
 const API_URL = process.env.API_URL ?? "http://localhost:8000";
 
 export async function POST(req: NextRequest) {
@@ -20,20 +23,17 @@ export async function POST(req: NextRequest) {
 
   const clientId = req.cookies.get("tf_cid")?.value ?? crypto.randomUUID().replace(/-/g, "");
   const res = await fetch(`${API_URL}/api/check`, {
+    signal: AbortSignal.timeout(30_000),
     method: "POST",
     body: out,
     headers: {
       "X-Client-Id": clientId,
       "Accept-Language": req.headers.get("accept-language") ?? "",
     },
-  });
-  const base = new URL("/", req.url);
-  if (!res.ok) {
-    base.searchParams.set("error", String(res.status));
-    return NextResponse.redirect(base, 303);
-  }
+  }).catch(() => null);
+  if (!res?.ok) return seeOther(`/?error=${res?.status ?? "offline"}`);
   const { id } = (await res.json()) as { id: string };
-  const response = NextResponse.redirect(new URL(`/result/${id}`, req.url), 303);
+  const response = seeOther(`/result/${id}`);
   response.cookies.set("tf_cid", clientId, { path: "/", maxAge: 31536000, sameSite: "lax" });
   return response;
 }

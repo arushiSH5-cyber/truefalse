@@ -63,11 +63,15 @@ class AIDetector:
             log.warning("ai_check_failed", check="reverse_image", error=str(exc))
             return [], []
 
-    async def check_image(self, path: Path) -> tuple[list[AISignal], list[EvidenceDraft]]:
+    async def check_image(
+        self, path: Path, readable: Path | None = None
+    ) -> tuple[list[AISignal], list[EvidenceDraft]]:
+        """`readable` is a decoded copy for the pixel checks when `path` is HEIC."""
+        pixels = readable or path
         files, classified, (recycled, evidence) = await asyncio.gather(
             self._file_checks(path, "image"),
-            self._classify([path], "image"),
-            self._reverse(path, "image"),
+            self._classify([pixels], "image"),
+            self._reverse(pixels, "image"),
         )
         return files + classified + recycled, evidence
 

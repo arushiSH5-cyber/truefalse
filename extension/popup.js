@@ -1,4 +1,4 @@
-import { submitCheck } from "./api.js";
+import { explainError, isWebUrl, submitCheck } from "./api.js";
 import { showJob } from "./render.js";
 
 const form = document.getElementById("form");
@@ -12,7 +12,7 @@ async function run(input) {
     form.hidden = true;
     await showJob(root, id);
   } catch (err) {
-    error.textContent = `${err.message}. Is the TrueFalse server running? Check Settings.`;
+    error.textContent = explainError(err);
   }
 }
 
@@ -28,5 +28,7 @@ form.addEventListener("submit", (e) => {
 
 document.getElementById("page").addEventListener("click", async () => {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (tab?.url) run({ url: tab.url });
+  // tab.url comes from activeTab, and is missing on pages Chrome keeps private.
+  if (isWebUrl(tab?.url)) run({ url: tab.url });
+  else error.textContent = "This page can't be checked. Copy the text and paste it here instead.";
 });

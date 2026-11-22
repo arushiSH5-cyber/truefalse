@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 from redis.asyncio import Redis
 
 from app.ai_detect.signals import AISignal
-from app.core.models import CheckReport, Part, ReplyTarget
+from app.core.models import CheckReport, Part, ReplyTarget, Verdict
 from app.respond.compose import MAX_SOURCES
 
 RESULT_TTL_S = 24 * 3600
@@ -27,6 +27,11 @@ class PublicSource(BaseModel):
     publisher: str | None
     tier: int
     published: str | None
+
+
+class PublicClaim(BaseModel):
+    claim: str  # original language
+    verdict: str
 
 
 class PublicResult(BaseModel):
@@ -45,9 +50,17 @@ class PublicResult(BaseModel):
     warnings: list[str]
     sources: list[PublicSource]
     claims: list[str]
+    claim_results: list[PublicClaim] = Field(default_factory=list)  # same order as `claims`
     needs_human_review: bool = False
     ai_overall: str = "no_signal"  # likely_ai | possibly_ai | recycled | edited | no_signal
     ai_signals: list[AISignal] = Field(default_factory=list)  # all of them, weak ones included
+
+    def headline_claim(self) -> str:
+        """The claim the overall verdict is about, to quote next to it on the share card."""
+        for c in self.claim_results:
+            if c.verdict == self.verdict:
+                return c.claim
+        return self.claims[0] if self.claims else ""
 
 
 class JobRecord(BaseModel):
@@ -66,6 +79,7 @@ def public_result(report: CheckReport) -> PublicResult:
     first_line = report.reply_text.split("\n", 1)[0]
     label = first_line.split(" ", 1)[1] if " " in first_line else report.overall.value
     label = reply.verdict_label if reply else label
+    verdicts = {j.claim_index: j.verdict.value for j in report.judgements}
     return PublicResult(
         verdict=report.overall.value,
         verdict_label=label,
@@ -85,6 +99,10 @@ def public_result(report: CheckReport) -> PublicResult:
             for e in sources[:MAX_SOURCES]
         ],
         claims=[c.original for c in report.claims],
+        claim_results=[
+            PublicClaim(claim=c.original, verdict=verdicts.get(i, Verdict.UNVERIFIED.value))
+            for i, c in enumerate(report.claims)
+        ],
         needs_human_review=report.needs_human_review,
         ai_overall=report.ai_report.overall,
         ai_signals=report.ai_report.signals,

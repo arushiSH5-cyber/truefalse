@@ -1,13 +1,18 @@
 import CheckForm from "@/components/CheckForm";
 import DemoExamples from "@/components/DemoExamples";
-import { HomeIntro, HomeTip } from "@/components/HomeIntro";
+import InstallCard from "@/components/InstallCard";
+import PhoneQR from "@/components/PhoneQR";
+import { HomeIntro, HomeTip, Legend } from "@/components/HomeIntro";
 import { DEMO } from "@/lib/demo";
 
 export default function Home() {
   return (
-    <div className="space-y-6">
+    <div className="stack">
       <HomeIntro />
       {DEMO ? <DemoExamples /> : <CheckForm />}
+      <Legend />
+      <InstallCard />
+      {DEMO && <PhoneQR />}
       {!DEMO && <HomeTip />}
     </div>
   );

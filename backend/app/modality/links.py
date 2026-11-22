@@ -26,6 +26,7 @@ import httpx
 from pydantic import BaseModel
 
 from app.core.logging import get_logger
+from app.modality.heic import is_heic
 
 log = get_logger(__name__)
 
@@ -84,6 +85,8 @@ OEMBED = {
     "tiktok": "https://www.tiktok.com/oembed",
 }
 MAX_THUMBNAIL_BYTES = 3_000_000
+MAX_IMAGE_BYTES = 20_000_000  # a link straight to a picture: same cap as an upload
+SNIFF_BYTES = 32
 
 
 class UnsafeURLError(Exception):
@@ -92,13 +95,13 @@ class UnsafeURLError(Exception):
 
 class LinkContent(BaseModel):
     url: str
-    kind: Literal["media", "post", "article", "preview"]
+    kind: Literal["media", "post", "article", "preview", "image"]
     title: str | None = None
     text: str = ""
     uploader: str | None = None
     published: str | None = None
     duration_s: float | None = None
-    media_path: str | None = None  # downloaded audio/video (temp dir, deleted after use)
+    media_path: str | None = None  # downloaded audio/video/image (temp dir, deleted after use)
     thumbnail_url: str | None = None  # preview picture, when only the preview could be read
 
 
@@ -158,10 +161,26 @@ async def assert_public_url(url: str) -> None:
         raise UnsafeURLError("host resolves to a non-public address")
 
 
+def is_image(head: bytes) -> bool:
+    """By content, not Content-Type: CDNs often mislabel pictures."""
+    return (
+        head.startswith((b"\x89PNG\r\n\x1a\n", b"\xff\xd8\xff", b"GIF87a", b"GIF89a"))
+        or (head.startswith(b"RIFF") and head[8:12] == b"WEBP")
+        or (head[4:8] == b"ftyp" and head[8:12] in (b"avif", b"avis"))
+        or is_heic(head)
+    )
+
+
 async def safe_get(
-    http: httpx.AsyncClient, url: str, max_bytes: int = MAX_HTML_BYTES
+    http: httpx.AsyncClient,
+    url: str,
+    max_bytes: int = MAX_HTML_BYTES,
+    max_image_bytes: int | None = None,
 ) -> tuple[str, bytes]:
-    """GET with per-hop SSRF validation and a response size cap. Returns (final_url, body)."""
+    """GET with per-hop SSRF validation and a response size cap. Returns (final_url, body).
+
+    `max_image_bytes` replaces `max_bytes` when the body turns out to be a picture.
+    """
     for _ in range(MAX_REDIRECTS + 1):
         await assert_public_url(url)
         async with http.stream("GET", url, follow_redirects=False) as resp:
@@ -169,12 +188,15 @@ async def safe_get(
                 url = urljoin(url, resp.headers["location"])
                 continue
             resp.raise_for_status()
-            body = b""
+            body = bytearray()
             async for chunk in resp.aiter_bytes():
                 body += chunk
-                if len(body) > max_bytes:
+                cap = max_bytes
+                if max_image_bytes and is_image(bytes(body[:SNIFF_BYTES])):
+                    cap = max_image_bytes
+                if len(body) > cap:
                     break
-            return url, body
+            return url, bytes(body)
     raise UnsafeURLError("too many redirects")
 
 
@@ -241,8 +263,22 @@ def extract_article(html: str, url: str) -> tuple[str | None, str, str | None]:
     return title, text, published
 
 
+async def fetch_page_or_image(http: httpx.AsyncClient, url: str, dest: Path) -> LinkContent:
+    """An article, or the picture itself when the link points straight to one (saved to `dest`)."""
+    final_url, body = await safe_get(http, url, max_image_bytes=MAX_IMAGE_BYTES)
+    if not is_image(body[:SNIFF_BYTES]):
+        return _article(final_url, body)
+    if len(body) > MAX_IMAGE_BYTES:
+        raise ValueError("image too large")
+    await asyncio.to_thread(dest.write_bytes, body)
+    return LinkContent(url=final_url, kind="image", media_path=str(dest))
+
+
 async def fetch_article(http: httpx.AsyncClient, url: str) -> LinkContent:
-    final_url, body = await safe_get(http, url)
+    return _article(*await safe_get(http, url))
+
+
+def _article(final_url: str, body: bytes) -> LinkContent:
     title, text, published = extract_article(body.decode("utf-8", errors="replace"), final_url)
     return LinkContent(url=final_url, kind="article", title=title, text=text, published=published)
 

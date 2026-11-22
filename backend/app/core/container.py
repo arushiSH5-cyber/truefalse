@@ -9,10 +9,12 @@ import httpx
 
 from app.core.config import Settings
 from app.core.db import get_engine
+from app.core.gemini import GeminiMainLLM, GeminiSTT
 from app.core.llm import AnthropicLLM, LLMClient, StructuredLLM
 from app.core.logging import get_logger
 from app.core.models import Platform
 from app.matching.factcheck_index import FactCheckIndex, PgFactCheckIndex
+from app.modality.base import SpeechToText
 from app.modality.hashes import PgImageHashStore
 from app.modality.links import YtDlpDownloader
 from app.modality.process import MediaFetcher, MediaProviders
@@ -23,6 +25,7 @@ from app.research.sources.news import BraveNewsSource, GdeltNewsSource
 from app.research.sources.pubmed import PubMedSource
 from app.research.sources.semantic_scholar import SemanticScholarSource
 from app.research.sources.web_search import BraveWebSearchSource
+from app.research.sources.wikipedia import WikipediaSource
 from app.verify.judges import MIN_VALID_JUDGES, PANEL, JudgeSpec, panel_for
 
 if TYPE_CHECKING:
@@ -64,6 +67,8 @@ def build_sources(settings: Settings, http: httpx.AsyncClient) -> list[Source]:
     if settings.search_provider == "brave" and (key := _secret(settings.search_api_key)):
         sources.append(BraveWebSearchSource(http, key))
         sources.append(BraveNewsSource(http, key))
+    else:
+        sources.append(WikipediaSource(http))  # some general search, even with no key
     if settings.gdelt_enabled:
         sources.append(GdeltNewsSource(http))
     log.info("sources_enabled", sources=[s.kind.value for s in sources])
@@ -204,8 +209,11 @@ def build_media(
 ) -> MediaProviders | None:
     if not settings.media_enabled:
         return None
-    stt = downloader = None
-    if importlib.util.find_spec("faster_whisper"):
+    stt: SpeechToText | None = None
+    downloader = None
+    if isinstance(llm, GeminiMainLLM):
+        stt = GeminiSTT(llm)  # no speech model to download
+    elif importlib.util.find_spec("faster_whisper"):
         from app.modality.audio import FasterWhisperSTT
 
         stt = FasterWhisperSTT(settings.whisper_model)
@@ -221,6 +229,7 @@ def build_media(
     return MediaProviders(
         llm=llm,
         fetcher=fetcher,
+        fetchers=fetchers or {},
         stt=stt,
         hashes=hashes,
         http=http,
@@ -235,15 +244,25 @@ def build_deps(
     fetcher: MediaFetcher | None = None,
     fetchers: dict[Platform, MediaFetcher] | None = None,
 ) -> Deps:
-    api_key = _secret(settings.anthropic_api_key)
-    if not api_key:
-        raise ConfigError("ANTHROPIC_API_KEY is not set")
-    llm = AnthropicLLM(
-        api_key,
-        settings.anthropic_model,
-        max_retries=settings.http_max_retries,
-        use_fallbacks=settings.llm_use_fallbacks,
-    )
+    llm: LLMClient
+    panel: tuple[JudgeSpec, ...]
+    if api_key := _secret(settings.anthropic_api_key):
+        claude = AnthropicLLM(
+            api_key,
+            settings.anthropic_model,
+            max_retries=settings.http_max_retries,
+            use_fallbacks=settings.llm_use_fallbacks,
+        )
+        llm, panel = claude, build_panel(settings, claude)
+    elif gemini_key := _secret(settings.gemini_api_key):
+        models = [m.strip() for m in settings.gemini_models.split(",") if m.strip()]
+        gemini = GeminiMainLLM(http, gemini_key, models)
+        llm = gemini
+        panel = tuple(
+            JudgeSpec(s.name, s.prompt, s.effort, gemini, f"google:{gemini.model}") for s in PANEL
+        )
+    else:
+        raise ConfigError("ANTHROPIC_API_KEY or GEMINI_API_KEY is not set")
     return Deps(
         llm=llm,
         sources=build_sources(settings, http),
@@ -256,7 +275,7 @@ def build_deps(
         index=build_index(settings),
         media=build_media(settings, llm, http, fetcher, fetchers),
         lid=build_lid(settings),
-        panel=build_panel(settings, llm),
+        panel=panel,
         ai=build_ai(settings, http) if settings.ai_text_signal else None,
         verdicts=build_verdict_cache(settings),
     )
