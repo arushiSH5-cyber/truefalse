@@ -16,6 +16,18 @@ export async function clientId() {
   return id;
 }
 
+export function isWebUrl(url) {
+  return /^https?:\/\//i.test(url ?? "");
+}
+
+/** A failed fetch is a TypeError; only then is "is the server running?" useful advice. */
+export function explainError(err) {
+  if (err instanceof TypeError) {
+    return "Could not reach TrueFalse. Is the server running? Check its address in Settings.";
+  }
+  return err instanceof Error ? err.message : String(err);
+}
+
 async function errorText(res) {
   const body = await res.json().catch(() => ({}));
   return typeof body.detail === "string" ? body.detail : `Error ${res.status}`;

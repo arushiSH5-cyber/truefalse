@@ -1,23 +1,14 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import {
-  cardUrl,
-  getJob,
-  sendFeedback,
-  type AISignal,
-  type JobRecord,
-  type Verdict,
-} from "@/lib/api";
+import Doodle from "@/components/Doodle";
+import { cardUrl, getJob, sendFeedback, type AISignal, type JobRecord, type PublicResult } from "@/lib/api";
+import { copyText, isWebUrl } from "@/lib/browser";
 import { DEMO } from "@/lib/demo";
-import { useLabels } from "@/lib/i18n";
+import { saveCheck, savedCheck } from "@/lib/history";
+import { labelsFor, useLabels, type Labels } from "@/lib/i18n";
+import { VERDICTS } from "@/lib/verdicts";
 
-const STYLE: Record<Verdict, { emoji: string; band: string }> = {
-  true: { emoji: "🟢", band: "bg-verdict-true" },
-  misleading: { emoji: "🟠", band: "bg-verdict-misleading" },
-  false: { emoji: "🔴", band: "bg-verdict-false" },
-  unverified: { emoji: "⚪", band: "bg-verdict-unverified" },
-};
 const STRENGTH: Record<AISignal["strength"], string> = {
   strong: "strong",
   moderate: "medium",
@@ -26,261 +17,378 @@ const STRENGTH: Record<AISignal["strength"], string> = {
 const POLL_MS = 2000;
 const GIVE_UP_MS = 6 * 60 * 1000;
 
-export default function ResultView({ id }: { id: string }) {
+function State({ buddy, title, children }: { buddy: string; title: string; children?: React.ReactNode }) {
+  return (
+    <div className="card waiting" aria-live="polite">
+      <Doodle name={buddy} size={156} className={buddy === "scout-think" ? "bob" : undefined} />
+      <p className="display mt-3 text-2xl">{title}</p>
+      {children}
+    </div>
+  );
+}
+
+export default function ResultView({ id: param }: { id: string }) {
+  // /result/saved?id=… is the one result page the service worker can keep for offline.
+  const [id, setId] = useState(param === "saved" ? "" : param);
   const [job, setJob] = useState<JobRecord | null>(null);
   const [missing, setMissing] = useState(false);
-  const [showMore, setShowMore] = useState(false);
+  const [offline, setOffline] = useState(false);
   const [timedOut, setTimedOut] = useState(false);
-  const [copied, setCopied] = useState(false);
-  const [feedback, setFeedback] = useState<"none" | "reporting" | "thanks" | "reported">("none");
-  const [note, setNote] = useState("");
+  const [seconds, setSeconds] = useState(0);
   const t = useLabels();
 
   useEffect(() => {
+    if (param !== "saved") return;
+    const wanted = new URLSearchParams(location.search).get("id");
+    if (wanted) setId(wanted);
+    else setMissing(true);
+  }, [param]);
+
+  useEffect(() => {
+    if (!id) return;
+    const kept = savedCheck(id);
+    if (kept) {
+      setJob({ id, status: "done", messages: [], result: kept.result });
+      return;
+    }
     let stop = false;
     const started = Date.now();
+    const clock = setInterval(() => setSeconds(Math.round((Date.now() - started) / 1000)), 1000);
     async function poll() {
       while (!stop) {
         try {
           const rec = await getJob(id);
-          if (!rec) {
-            setMissing(true);
-            return;
-          }
+          if (stop) return;
+          setOffline(false);
+          if (!rec) return setMissing(true);
           setJob(rec);
-          if (rec.status === "done" || rec.status === "failed") return;
+          if (rec.status === "done" && rec.result) saveCheck(id, rec.result);
+          if (rec.status === "done" || rec.status === "failed") return clearInterval(clock);
         } catch {
-          /* transient network error on a weak connection: keep polling */
+          setOffline(true); // weak connection: keep trying
         }
-        if (Date.now() - started > GIVE_UP_MS) {
-          setTimedOut(true);
-          return;
-        }
+        if (Date.now() - started > GIVE_UP_MS) return setTimedOut(true);
         await new Promise((r) => setTimeout(r, POLL_MS));
       }
     }
     poll();
     return () => {
       stop = true;
+      clearInterval(clock);
     };
   }, [id]);
 
-  if (missing) return <p>{t.expired}</p>;
+  if (missing) return <State buddy="luna-sleep" title={t.expired} />;
   if (!job || job.status === "queued" || job.status === "working") {
     return (
-      <div aria-live="polite" className="space-y-3">
-        <p className="text-lg font-medium">{t.checking}</p>
+      <State buddy={offline ? "scout-sad" : "scout-think"} title={offline ? t.serverDown : t.checking}>
         {job?.messages.slice(-1).map((m) => (
-          <p key={m} className="text-slate-600 dark:text-slate-400" dir="auto">
+          <p key={m} className="soft wrap-any" dir="auto">
             {m}
           </p>
         ))}
+        <p className="hand soft" aria-hidden="true">
+          {seconds}s
+        </p>
         {timedOut && <p>{t.slow}</p>}
-      </div>
+      </State>
     );
   }
   if (job.status === "failed" || !job.result) {
-    return <p>{t.failed}</p>;
+    return (
+      <State buddy="scout-sad" title={t.failed}>
+        <p className="small soft">{t.failedHint}</p>
+      </State>
+    );
+  }
+  return <Receipt id={id} result={job.result} t={t} />;
+}
+
+function Receipt({ id, result: r, t }: { id: string; result: PublicResult; t: Labels }) {
+  const v = VERDICTS[r.verdict];
+  const answer = labelsFor(r.language); // claim verdicts read in the answer's language
+
+  return (
+    <article className="receipt" lang={r.language}>
+      <header className={v.pattern}>
+        <Doodle name={v.buddy} size={130} />
+        <div className="min-w-0">
+          <h1 className="stamp" dir="auto">
+            {r.verdict_label}
+          </h1>
+          <p className="hand mt-2" dir="auto">
+            {answer[v.line]}
+          </p>
+        </div>
+      </header>
+
+      <section className="receipt-part">
+        <p className="wrap-any text-lg" dir="auto">
+          {r.explanation}
+        </p>
+        <p className="tag mt-2" dir="auto">
+          {r.confidence_label || `Confidence: ${r.confidence}`}
+        </p>
+      </section>
+
+      {r.claims.length > 0 && (
+        <section className="receipt-part">
+          <h2 className="receipt-label">{t.weChecked}</h2>
+          <ul>
+            {r.claims.map((claim, i) => {
+              // One claim and an old record without claim_results: the overall verdict is its verdict.
+              const verdict = r.claim_results?.[i]?.verdict ?? (r.claims.length === 1 ? r.verdict : null);
+              const item = verdict && VERDICTS[verdict];
+              return (
+                <li key={i} className="line-item">
+                  <Doodle name={item ? item.badge : "note"} size={38} />
+                  <div>
+                    {item && (
+                      <strong className="block" dir="auto">
+                        {answer[item.label]}
+                      </strong>
+                    )}
+                    <span className="soft wrap-any block" dir="auto">
+                      “{claim}”
+                    </span>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      )}
+
+      {(r.needs_human_review || r.warnings.length > 0) && (
+        <ul className="receipt-part small">
+          {r.needs_human_review && (
+            <li className="line-item">
+              <Doodle name="scout-think" size={34} />
+              <div>{t.review}</div>
+            </li>
+          )}
+          {r.warnings.map((w) => (
+            <li key={w} className="line-item">
+              <Doodle name="warning" size={30} />
+              <div className="wrap-any" dir="auto">
+                {w}
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <section className="receipt-part">
+        <h2 className="receipt-label" dir="auto">
+          {r.sources_heading}
+        </h2>
+        {r.sources.length > 0 ? (
+          <ol>
+            {r.sources.map((src, i) => (
+              <li key={`${src.url}-${i}`} className="line-item source">
+                <Doodle name={src.tier === 1 ? "shield" : "link"} size={30} />
+                <div>
+                  {isWebUrl(src.url) ? (
+                    <a href={src.url} target="_blank" rel="noopener noreferrer" dir="auto">
+                      {src.title}
+                    </a>
+                  ) : (
+                    <span className="wrap-any">{src.title}</span>
+                  )}
+                  <p className="small soft wrap-any">
+                    {[src.publisher, src.published].filter(Boolean).join(" · ")}{" "}
+                    <span className="tag">{[t.tier1, t.tier2, t.tier3][src.tier - 1] ?? t.tier3}</span>
+                  </p>
+                </div>
+              </li>
+            ))}
+          </ol>
+        ) : (
+          <p className="small">{t.noSource}</p>
+        )}
+      </section>
+
+      {r.ai_signals.length > 0 && (
+        <details className="receipt-part small">
+          <summary className="receipt-label cursor-pointer">{t.aiChecks}</summary>
+          <ul>
+            {r.ai_signals.map((sig, i) => (
+              <li key={`${sig.detector}-${i}`} className="wrap-any py-1">
+                {sig.detail || `${sig.detector}: ${sig.finding}`} ({STRENGTH[sig.strength]}){" "}
+                {sig.source_url && isWebUrl(sig.source_url) && (
+                  <a href={sig.source_url} target="_blank" rel="noopener noreferrer" className="underline">
+                    link
+                  </a>
+                )}
+              </li>
+            ))}
+          </ul>
+          <p className="soft">{t.weakNote}</p>
+        </details>
+      )}
+
+      {r.correction && <SendBack result={r} t={t} />}
+      <Extras id={id} result={r} t={t} />
+      <Feedback id={id} t={t} />
+      <p className="hand soft pt-2 text-center">{t.thanksForChecking}</p>
+      <svg className="tear" aria-hidden="true">
+        <defs>
+          <pattern id="torn-edge" width="20" height="14" patternUnits="userSpaceOnUse">
+            <path d="M0 0L10 12L20 0Z" fill="var(--card)" />
+            <path d="M0 0L10 12L20 0" fill="none" stroke="var(--line)" strokeWidth="2" strokeLinejoin="round" />
+          </pattern>
+        </defs>
+        <rect width="100%" height="14" fill="url(#torn-edge)" />
+      </svg>
+    </article>
+  );
+}
+
+function SendBack({ result: r, t }: { result: PublicResult; t: Labels }) {
+  const [copied, setCopied] = useState(false);
+
+  async function forward() {
+    if (navigator.share) {
+      try {
+        await navigator.share({ text: r.correction });
+        return;
+      } catch (err) {
+        if (err instanceof Error && err.name === "AbortError") return; // they closed the share sheet
+      }
+    }
+    if (await copyText(r.correction)) {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2500);
+    }
   }
 
-  const r = job.result;
-  const s = STYLE[r.verdict];
+  return (
+    <section className="receipt-part">
+      <h2 className="receipt-label" dir="auto">
+        {r.forward_heading}
+      </h2>
+      <p className="field wrap-any whitespace-pre-wrap" dir="auto">
+        {r.correction}
+      </p>
+      <div className="row mt-2">
+        <button type="button" onClick={forward} className="btn btn-main">
+          <Doodle name={copied ? "check" : "send"} size={26} />
+          {copied ? t.copied : t.forwardCopy}
+        </button>
+        <a
+          className="btn"
+          href={`https://wa.me/?text=${encodeURIComponent(r.correction)}`}
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          <Doodle name="heart" size={22} />
+          WhatsApp
+        </a>
+      </div>
+    </section>
+  );
+}
 
+function Extras({ id, result: r, t }: { id: string; result: PublicResult; t: Labels }) {
   async function share() {
     try {
-      const blob = await (await fetch(cardUrl(id))).blob();
-      const file = new File([blob], "truefalse.png", { type: "image/png" });
-      if (navigator.canShare?.({ files: [file] })) {
-        await navigator.share({ files: [file], text: `${s.emoji} ${r.verdict_label}` });
-        return;
+      const res = await fetch(cardUrl(id));
+      if (res.ok) {
+        const file = new File([await res.blob()], "truefalse.png", { type: "image/png" });
+        if (navigator.canShare?.({ files: [file] })) {
+          await navigator.share({ files: [file], text: r.verdict_label });
+          return;
+        }
       }
-    } catch {
-      /* fall back to opening the image */
+    } catch (err) {
+      if (err instanceof Error && err.name === "AbortError") return;
     }
     window.open(cardUrl(id), "_blank", "noopener");
   }
 
-  async function forward() {
-    try {
-      if (navigator.share) {
-        await navigator.share({ text: r.correction });
-        return;
-      }
-    } catch {
-      /* cancelled or unsupported: copy instead */
-    }
-    try {
-      await navigator.clipboard.writeText(r.correction);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2500);
-    } catch {
-      /* clipboard blocked: the text is visible and selectable */
-    }
-  }
-
-  async function rate(rating: "up" | "down") {
-    try {
-      await sendFeedback(id, rating, rating === "down" ? note : "");
-    } catch {
-      /* feedback is best effort */
-    }
-    setFeedback(rating === "up" ? "thanks" : "reported");
-  }
-
   function listen() {
-    const u = new SpeechSynthesisUtterance(`${r.verdict_label}. ${r.explanation}`);
-    u.lang = r.language;
+    const said = new SpeechSynthesisUtterance(`${r.verdict_label}. ${r.explanation}`);
+    said.lang = r.language;
     speechSynthesis.cancel();
-    speechSynthesis.speak(u);
+    speechSynthesis.speak(said);
   }
 
   return (
-    <article className="overflow-hidden rounded-2xl bg-white shadow dark:bg-slate-900" lang={r.language}>
-      <div className={`${s.band} px-5 py-4 text-white`}>
-        <p className="text-2xl font-bold" dir="auto">
-          {s.emoji} {r.verdict_label}
-        </p>
-      </div>
-      <div className="space-y-4 p-5">
-        {r.claims[0] && (
-          <p className="text-sm italic text-slate-500" dir="auto">
-            “{r.claims[0]}”
-          </p>
-        )}
-        <p className="text-lg leading-relaxed" dir="auto">
-          {r.explanation}
-        </p>
-        <p className="text-sm font-medium" dir="auto">
-          {r.confidence_label || `Confidence: ${r.confidence}`}
-        </p>
-        {r.needs_human_review && (
-          <p className="rounded-lg bg-slate-100 p-3 text-sm dark:bg-slate-800">
-            {t.review}
-          </p>
-        )}
-        {r.warnings.length > 0 && (
-          <ul className="space-y-1 text-sm text-amber-800 dark:text-amber-300" dir="auto">
-            {r.warnings.map((w) => (
-              <li key={w}>⚠️ {w}</li>
-            ))}
-          </ul>
-        )}
-        {r.correction && (
-          <section className="space-y-2 rounded-xl border border-slate-200 p-3 dark:border-slate-700">
-            <h2 className="text-sm font-semibold" dir="auto">
-              📤 {r.forward_heading}
-            </h2>
-            <p className="whitespace-pre-wrap break-words text-sm" dir="auto">
-              {r.correction}
-            </p>
-            <button onClick={forward} className="rounded-lg bg-slate-900 px-3 py-2 text-sm text-white dark:bg-white dark:text-slate-900">
-              {copied ? t.copied : t.forwardCopy}
-            </button>
-          </section>
-        )}
-        <div className="flex flex-wrap gap-2">
-          {!DEMO && (
-            <button onClick={share} className="rounded-lg border px-3 py-2 text-sm">
-              {t.sharePicture}
-            </button>
-          )}
-          <button onClick={listen} className="rounded-lg border px-3 py-2 text-sm">
-            {t.listen}
+    <div className="receipt-part row">
+      <button type="button" onClick={listen} className="btn">
+        <Doodle name="speaker" size={26} />
+        {t.listen}
+      </button>
+      {!DEMO && (
+        <button type="button" onClick={share} className="btn">
+          <Doodle name="photo" size={26} />
+          {t.sharePicture}
+        </button>
+      )}
+    </div>
+  );
+}
+
+function Feedback({ id, t }: { id: string; t: Labels }) {
+  const [state, setState] = useState<"none" | "reporting" | "thanks" | "reported">("none");
+  const [note, setNote] = useState("");
+  const [sending, setSending] = useState(false);
+  const [sendFailed, setSendFailed] = useState(false);
+
+  async function rate(rating: "up" | "down") {
+    setSending(true);
+    setSendFailed(false);
+    try {
+      await sendFeedback(id, rating, rating === "down" ? note : "");
+      setState(rating === "up" ? "thanks" : "reported");
+    } catch {
+      setSendFailed(true);
+    } finally {
+      setSending(false);
+    }
+  }
+
+  return (
+    <section className="receipt-part small" aria-live="polite">
+      {state === "thanks" && <p>{t.thanks}</p>}
+      {state === "reported" && <p>{t.reported}</p>}
+      {state === "none" && (
+        <div className="row">
+          <span>{t.helpful}</span>
+          <button type="button" onClick={() => rate("up")} disabled={sending} aria-label={t.yes} className="round">
+            <Doodle name="thumb" size={28} />
           </button>
-          <button onClick={() => setShowMore((v) => !v)} className="rounded-lg border px-3 py-2 text-sm">
-            {showMore ? t.less : t.more}
+          <button
+            type="button"
+            onClick={() => {
+              setSendFailed(false);
+              setState("reporting");
+            }}
+            disabled={sending}
+            className="btn"
+          >
+            <Doodle name="flag" size={24} />
+            {t.reportMistake}
           </button>
         </div>
-        <section className="space-y-2 border-t pt-3 text-sm" aria-live="polite">
-          {feedback === "thanks" && <p>{t.thanks}</p>}
-          {feedback === "reported" && <p>{t.reported}</p>}
-          {feedback === "none" && (
-            <div className="flex flex-wrap items-center gap-2">
-              <span>{t.helpful}</span>
-              <button onClick={() => rate("up")} aria-label="👍" className="rounded-lg border px-3 py-1">
-                👍
-              </button>
-              <button
-                onClick={() => setFeedback("reporting")}
-                className="rounded-lg border px-3 py-1"
-              >
-                👎 {t.reportMistake}
-              </button>
-            </div>
-          )}
-          {feedback === "reporting" && (
-            <div className="space-y-2">
-              <label htmlFor="note" className="block">
-                {t.whatWrong}
-              </label>
-              <textarea
-                id="note"
-                value={note}
-                onChange={(e) => setNote(e.target.value)}
-                rows={3}
-                maxLength={2000}
-                dir="auto"
-                className="w-full rounded-lg border border-slate-300 bg-white p-2 dark:border-slate-700 dark:bg-slate-900"
-              />
-              <button
-                onClick={() => rate("down")}
-                className="rounded-lg bg-slate-900 px-3 py-2 text-white dark:bg-white dark:text-slate-900"
-              >
-                {t.send}
-              </button>
-            </div>
-          )}
-        </section>
-        {showMore && (
-          <div className="space-y-3 border-t pt-3">
-            <h2 className="text-sm font-semibold" dir="auto">
-              {r.sources_heading}
-            </h2>
-            {r.sources.length > 0 ? (
-              <ol className="list-decimal space-y-2 pl-5 text-sm">
-                {r.sources.map((src) => (
-                  <li key={src.url}>
-                    <a href={src.url} target="_blank" rel="noopener noreferrer" className="underline">
-                      {src.title}
-                    </a>
-                    {src.publisher && <span className="text-slate-500"> · {src.publisher}</span>}
-                    {src.published && <span className="text-slate-500"> · {src.published}</span>}
-                  </li>
-                ))}
-              </ol>
-            ) : (
-              <p className="text-sm">{t.noSource}</p>
-            )}
-            {r.ai_signals.length > 0 && (
-              <div className="space-y-1 text-sm">
-                <h2 className="font-semibold">{t.aiChecks}</h2>
-                <ul className="space-y-1 text-slate-600 dark:text-slate-400">
-                  {r.ai_signals.map((sig, i) => (
-                    <li key={`${sig.detector}-${i}`}>
-                      {sig.detail || `${sig.detector}: ${sig.finding}`}{" "}
-                      <span className="text-xs">({STRENGTH[sig.strength]})</span>
-                      {sig.source_url && (
-                        <>
-                          {" "}
-                          <a href={sig.source_url} target="_blank" rel="noopener noreferrer" className="underline">
-                            link
-                          </a>
-                        </>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-                <p className="text-xs text-slate-500">
-                  {t.weakNote}
-                </p>
-              </div>
-            )}
-            <pre className="whitespace-pre-wrap text-xs text-slate-500" dir="auto">
-              {r.reply_text}
-            </pre>
-          </div>
-        )}
-      </div>
-    </article>
+      )}
+      {state === "reporting" && (
+        <div>
+          <label htmlFor="note" className="mb-2 block">
+            {t.whatWrong}
+          </label>
+          <textarea id="note" value={note} onChange={(e) => setNote(e.target.value)} rows={3} maxLength={2000}
+            dir="auto" className="field" />
+          <button type="button" onClick={() => rate("down")} disabled={sending} className="btn btn-main mt-2">
+            {t.send}
+          </button>
+        </div>
+      )}
+      {sendFailed && (
+        <p role="alert" className="alert mt-2">
+          {t.feedbackFailed}
+        </p>
+      )}
+    </section>
   );
 }

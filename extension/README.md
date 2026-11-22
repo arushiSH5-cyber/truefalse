@@ -16,5 +16,8 @@ in a small window: verdict, short reason, sources, a message you can copy and fo
 
 - Uses the same web API as the PWA (`POST /api/check`, `GET /api/check/{id}`,
   `POST /api/check/{id}/feedback`) and an anonymous random id for rate limiting.
-- Images are downloaded and uploaded when the site allows it; otherwise the image link is sent.
-- No build step and no tracking. Nothing is sent anywhere except the server you set.
+- Images are downloaded and uploaded when the site allows it; otherwise the server downloads the
+  image from its link. Images that need a login can't be read this way.
+- `activeTab` gives access to the current tab only when you click TrueFalse or its menu.
+- No build step and no tracking. The extension talks only to the server you set. That server
+  sends what you check to AI, search and fact-checking services.
