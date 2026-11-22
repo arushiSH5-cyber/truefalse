@@ -118,7 +118,7 @@ limits and file locations per item are in [GAP_ANALYSIS.md](GAP_ANALYSIS.md) §6
 ### Bug fixes (2026-11-22)
 - Extension: `activeTab` (fixes "Check this page", allows tab capture); selections send only the
   selected text; image links are downloaded and read as images by the backend.
-- HEIC photos are decoded with ffmpeg 8+ (`modality/heic.py`).
+- HEIC photos are decoded with ffmpeg (`modality/heic.py`), when the build joins HEIC tiles.
 - Every claim shows its own verdict; the share card quotes the claim its verdict is about.
 - Feedback shows failures; privacy notes state what is sent and how long it is kept.
 
@@ -131,7 +131,7 @@ limits and file locations per item are in [GAP_ANALYSIS.md](GAP_ANALYSIS.md) §6
 - Wikipedia is the keyless general search when there is no Brave key.
 
 ## Blockers / notes
-- HEIC needs ffmpeg 8+. The Docker image (and possibly CI) has an older one: there the user is told to
+- HEIC needs an ffmpeg that joins HEIC tiles (8.1 on macOS does; CI's doesn't, Docker's likely not): elsewhere the user is told to
   send a JPEG or screenshot, and the decode tests skip. `pillow-heif` would remove this limit.
 - **Not yet run against real APIs.** Every external call is tested only against fakes and saved
   sample responses. The first live run needs `ANTHROPIC_API_KEY` (and ideally

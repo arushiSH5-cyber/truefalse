@@ -1,10 +1,10 @@
 """Regressions: HEIC photos, image links, and one verdict per claim for the web and extension."""
 
 import io
-import re
 import shutil
 import socket
 import subprocess
+import tempfile
 from pathlib import Path
 
 import httpx
@@ -37,15 +37,22 @@ DATA = Path(__file__).parent / "data"
 IMG_URL = "https://cdn.example.com/photo"
 
 
-def _ffmpeg_major() -> int:
+def _ffmpeg_joins_heic_tiles() -> bool:
+    """Whether this machine's ffmpeg decodes a tiled HEIC whole (the version number doesn't say)."""
     if not shutil.which("ffmpeg"):
-        return 0
-    out = subprocess.run(["ffmpeg", "-version"], capture_output=True, text=True).stdout
-    found = re.search(r"ffmpeg version n?(\d+)\.", out)
-    return int(found[1]) if found else 0
+        return False
+    with tempfile.TemporaryDirectory() as tmp:
+        out = Path(tmp) / "out.png"
+        cmd = ["ffmpeg", "-v", "error", "-i", str(DATA / "grid.heic"), "-frames:v", "1", str(out)]
+        if subprocess.run(cmd, capture_output=True).returncode or not out.exists():
+            return False
+        with Image.open(out) as img:
+            return img.size == (1100, 700)
 
 
-needs_tile_grid = pytest.mark.skipif(_ffmpeg_major() < 8, reason="HEIC needs ffmpeg 8+")
+needs_tile_grid = pytest.mark.skipif(
+    not _ffmpeg_joins_heic_tiles(), reason="this ffmpeg can't join HEIC tiles"
+)
 
 
 def _llm() -> FakeLLM:
