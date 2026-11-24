@@ -20,8 +20,9 @@ If no source backs an answer, it says **Unverified** instead of guessing.
 
 <img src="docs/qr.png" width="150" alt="QR code for the TrueFalse demo">
 
-Scan with your phone's camera, then "Add to Home Screen" to install it like an app. The online
-demo shows saved example answers. To check your own messages, run it on your laptop (below).
+Scan with your phone's camera, then "Add to Home Screen" to install it like an app. It's the full
+app: type or paste a message, take a photo, record a voice note or upload a file. The free checker
+behind it sleeps when nobody uses it, so the first check after a quiet spell takes about a minute.
 
 ## Host it for free (always on)
 
