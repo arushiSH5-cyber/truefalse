@@ -117,6 +117,32 @@ export async function getStatus(): Promise<"ok" | "no-key" | "down"> {
   }
 }
 
+export interface ForYouItem {
+  title: string;
+  url: string;
+  publisher: string;
+  language: string;
+  summary: string;
+  published: number | null;
+  why: string;
+}
+
+export interface ForYouResult {
+  topics: string[];
+  items: ForYouItem[];
+}
+
+/** Fact-checks picked from the claims in "My checks" (sent, never stored by the server). */
+export async function getForYou(recent: string[], language: string): Promise<ForYouResult> {
+  const res = await fetch(`${API_URL}/api/for-you`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Client-Id": clientId() },
+    body: JSON.stringify({ recent: recent.slice(0, 10), language }),
+  });
+  if (!res.ok) throw new Error(String(res.status));
+  return (await res.json()) as ForYouResult;
+}
+
 export function cardUrl(id: string): string {
   return `${API_URL}/api/check/${encodeURIComponent(id)}/card.png`;
 }

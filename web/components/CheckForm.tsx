@@ -29,7 +29,11 @@ export default function CheckForm() {
 
   useEffect(() => {
     // The share target sends people back here with ?error=<status>.
-    if (new URLSearchParams(location.search).has("error")) setError(t.shareFailed);
+    const params = new URLSearchParams(location.search);
+    if (params.has("error")) setError(t.shareFailed);
+    // "Check it" on the For you tab opens this form with the headline filled in.
+    const prefill = params.get("text");
+    if (prefill) setText(prefill.slice(0, 2000));
   }, [t]);
 
   useEffect(() => {

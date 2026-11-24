@@ -541,3 +541,22 @@ dialog.camera video {
     transition: none !important;
   }
 }
+
+/* ---- For you ---- */
+.chip {
+  padding: 4px 12px;
+  border: 2px solid var(--line);
+  border-radius: 999px;
+  background: var(--rose);
+  font-size: 0.8125rem;
+  font-weight: 700;
+}
+.foryou li + li {
+  margin-top: 12px;
+}
+.foryou .why {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+}
