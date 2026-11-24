@@ -12,7 +12,13 @@ export const metadata: Metadata = {
   applicationName: "TrueFalse",
   description: "Check forwarded messages, photos, voice notes, videos and links, in any language.",
   manifest: `${BASE}/manifest.webmanifest`,
-  icons: { icon: `${BASE}/icon-192.png`, apple: `${BASE}/apple-touch-icon.png` },
+  icons: {
+    icon: [
+      { url: `${BASE}/icon.svg`, type: "image/svg+xml" },
+      { url: `${BASE}/favicon.png`, type: "image/png", sizes: "64x64" },
+    ],
+    apple: `${BASE}/apple-touch-icon.png`,
+  },
   appleWebApp: { capable: true, title: "TrueFalse", statusBarStyle: "default" },
 };
 

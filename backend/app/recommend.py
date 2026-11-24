@@ -70,7 +70,7 @@ class _Pick(BaseModel):
     index: int
     why: str = Field(default="", max_length=120)
     myth: str = Field(default="", max_length=200)
-    verdict: Verdict = ""
+    verdict: str = Field(default="", max_length=20)  # Gemini rejects "" in an enum; checked below
     truth: str = Field(default="", max_length=240)
 
 
@@ -196,6 +196,11 @@ _FALSE = re.compile(
 )
 
 
+def _verdict(value: str) -> Verdict:
+    v = value.strip().lower()
+    return v if v in ("false", "misleading", "true", "mixed") else ""  # type: ignore[return-value]
+
+
 def guess(item: FeedItem, why: str = "") -> Recommendation:
     text = f"{item.title} {item.summary}"
     verdict: Verdict = (
@@ -281,7 +286,7 @@ async def recommend(
                 max_tokens=3000,
             )
     except Exception as exc:
-        log.warning("for_you_llm_failed", error=type(exc).__name__)
+        log.warning("for_you_llm_failed", error=type(exc).__name__, detail=str(exc)[:200])
         return overlap_ranking(items, recent, language) if recent else latest(items, language)
     seen: set[int] = set()
     picked: list[Recommendation] = []
@@ -296,7 +301,7 @@ async def recommend(
                     why=pick.why.strip(),
                     myth=pick.myth.strip(),
                     # A verdict needs a myth to be about; otherwise keep only what the text says.
-                    verdict=pick.verdict if pick.myth.strip() else fallback.verdict,
+                    verdict=_verdict(pick.verdict) if pick.myth.strip() else fallback.verdict,
                     truth=pick.truth.strip() or item.summary,
                 )
             )

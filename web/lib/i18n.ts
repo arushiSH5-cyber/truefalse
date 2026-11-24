@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { LANG_EVENT, uiLanguage } from "@/lib/lang";
 
 /**
  * Labels for the web app's own buttons and status text, picked from the browser's language.
@@ -53,9 +54,18 @@ const EN = {
   navHistory: "My checks",
   navForYou: "For you",
   forYouNote:
-    "Recent fact-checks from real fact-checkers, picked from what you've checked. Your checks stay on this device; only their claims are sent to pick these.",
-  forYouLatest: "Going around now",
-  forYouEmpty: "Check a few things and this fills up with fact-checks on the same topics.",
+    "Myths busted by real fact-checkers. The more you check, the more it's about what you care about. Your checks stay on this device.",
+  forYouLatest: "Busted lately",
+  forYouEmpty: "Check a few things and this fills up with myths on the same topics.",
+  forYouMyths: "Myths people still believe",
+  forYouMyth: "Myth",
+  forYouTruth: "The truth",
+  verdictMixed: "Mixed",
+  language: "Language",
+  languageAuto: "Same as the message",
+  translate: "Translate",
+  translating: "Translating…",
+  translateFailed: "Couldn't translate right now.",
   forYouBecause: "Because you checked",
   forYouRead: "Read the fact-check",
   forYouCheck: "Check it",
@@ -483,13 +493,16 @@ export function labelsFor(language: string | undefined): Labels {
 export function useLabels(): Labels {
   const [labels, setLabels] = useState<Labels>(EN);
   useEffect(() => {
-    const lang = navigator.language || "en";
-    const base = lang.split("-")[0].toLowerCase();
-    setLabels(labelsFor(lang));
-    if (T[base]) {
-      document.documentElement.lang = base;
-      document.documentElement.dir = RTL.has(base) ? "rtl" : "ltr";
-    }
+    const apply = () => {
+      const lang = uiLanguage();
+      const base = lang.split("-")[0].toLowerCase();
+      setLabels(labelsFor(lang));
+      document.documentElement.lang = T[base] ? base : "en";
+      document.documentElement.dir = T[base] && RTL.has(base) ? "rtl" : "ltr";
+    };
+    apply();
+    window.addEventListener(LANG_EVENT, apply);
+    return () => window.removeEventListener(LANG_EVENT, apply);
   }, []);
   return labels;
 }

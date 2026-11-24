@@ -560,3 +560,56 @@ dialog.camera video {
   gap: 6px;
   margin-top: 6px;
 }
+.myth {
+  position: relative;
+  display: grid;
+  gap: 10px;
+}
+.myth p {
+  margin: 0;
+}
+.myth .struck {
+  text-decoration: line-through;
+  text-decoration-thickness: 2px;
+  text-decoration-color: #d9536f;
+}
+.vstamp {
+  justify-self: start;
+  padding: 2px 12px;
+  border: 2.5px solid var(--line);
+  border-radius: 8px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  transform: rotate(-3deg);
+}
+.vstamp-false {
+  background: var(--rose);
+}
+.vstamp-misleading,
+.vstamp-mixed {
+  background: var(--butter);
+}
+.vstamp-true {
+  background: var(--mint);
+}
+.lang-select {
+  max-width: 9.5rem;
+  padding: 6px 10px;
+  border: 2px solid var(--line);
+  border-radius: 999px;
+  background: var(--card, transparent);
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.875rem;
+  font-weight: 700;
+}
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.translate-bar {
+  justify-content: flex-end;
+  margin-bottom: 8px;
+}
