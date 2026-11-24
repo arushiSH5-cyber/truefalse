@@ -12,6 +12,7 @@ import time
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from email.utils import parsedate_to_datetime
+from typing import Literal
 
 import httpx
 from pydantic import BaseModel, Field
@@ -19,6 +20,7 @@ from pydantic import BaseModel, Field
 from app.core import prompts
 from app.core.llm import StructuredLLM
 from app.core.logging import get_logger
+from app.myths import MYTHS, Myth
 
 log = get_logger(__name__)
 
@@ -48,18 +50,28 @@ class FeedItem(BaseModel):
     published: float | None = None  # unix time
 
 
+Verdict = Literal["false", "misleading", "true", "mixed", ""]
+
+
 class Recommendation(FeedItem):
     why: str = ""
+    myth: str = ""  # the claim the fact-checkers looked at, said plainly
+    verdict: Verdict = ""  # what they found; "" when the article isn't a verdict on a claim
+    truth: str = ""  # one line: what is actually true
 
 
 class ForYou(BaseModel):
     topics: list[str]
-    items: list[Recommendation]
+    items: list[Recommendation]  # recent fact-checks from the feeds
+    myths: list[Recommendation] = Field(default_factory=list)  # common myths, busted
 
 
 class _Pick(BaseModel):
     index: int
-    why: str = Field(max_length=120)
+    why: str = Field(default="", max_length=120)
+    myth: str = Field(default="", max_length=200)
+    verdict: str = Field(default="", max_length=20)  # Gemini rejects "" in an enum; checked below
+    truth: str = Field(default="", max_length=240)
 
 
 class _Picks(BaseModel):
@@ -172,9 +184,58 @@ def _by_language(items: list[FeedItem], language: str | None) -> list[FeedItem]:
     return sorted(items, key=lambda i: 0 if i.language == base else 1 if i.language == "en" else 2)
 
 
+# Without the AI: a verdict only when the headline or summary says it outright.
+_MISLEADING = re.compile(
+    r"\b(misleading|missing context|out of context|exaggerat\w*|distort\w*|spins?|half[- ]true)\b",
+    re.I,
+)
+_FALSE = re.compile(
+    r"\b(fake|false|falsely|hoax|no evidence|debunk\w*|fabricated|doctored|ai[- ]generated|"
+    r"altered|misattributed|baseless|not real)\b",
+    re.I,
+)
+
+
+def _verdict(value: str) -> Verdict:
+    v = value.strip().lower()
+    return v if v in ("false", "misleading", "true", "mixed") else ""  # type: ignore[return-value]
+
+
+def guess(item: FeedItem, why: str = "") -> Recommendation:
+    text = f"{item.title} {item.summary}"
+    verdict: Verdict = (
+        "misleading" if _MISLEADING.search(text) else "false" if _FALSE.search(text) else ""
+    )
+    return Recommendation(**item.model_dump(), why=why, verdict=verdict, truth=item.summary)
+
+
+def common_myths(recent: list[str], topics: list[str]) -> list[Recommendation]:
+    """Every common myth, the ones closest to what this person checks first."""
+    wanted = set().union(*(_words(r) for r in recent)) if recent else set()
+    wanted |= {t.lower() for t in topics}
+
+    def score(m: Myth) -> int:
+        return len(wanted & (set(m.words) | _words(m.myth) | {m.topic.lower()}))
+
+    ranked = sorted(MYTHS, key=score, reverse=True)  # stable: list order breaks ties
+    return [
+        Recommendation(
+            title=m.myth,
+            url=m.url,
+            publisher=m.publisher,
+            language="en",
+            myth=m.myth,
+            verdict="false",
+            truth=m.truth,
+            why=m.topic,
+        )
+        for m in ranked
+    ]
+
+
 def latest(items: list[FeedItem], language: str | None) -> ForYou:
     picked = _by_language(items, language)[:MAX_ITEMS]
-    return ForYou(topics=[], items=[Recommendation(**i.model_dump()) for i in picked])
+    return ForYou(topics=[], items=[guess(i) for i in picked], myths=common_myths([], []))
 
 
 def overlap_ranking(items: list[FeedItem], recent: list[str], language: str | None) -> ForYou:
@@ -183,23 +244,34 @@ def overlap_ranking(items: list[FeedItem], recent: list[str], language: str | No
     scored = [(len(wanted & _words(f"{i.title} {i.summary}")), i) for i in items]
     hits = [i for score, i in sorted(scored, key=lambda s: -s[0]) if score >= 2]
     if not hits:
-        return latest(items, language)
-    return ForYou(topics=[], items=[Recommendation(**i.model_dump()) for i in hits[:MAX_ITEMS]])
+        out = latest(items, language)
+        out.myths = common_myths(recent, [])
+        return out
+    return ForYou(
+        topics=[],
+        items=[guess(i) for i in hits[:MAX_ITEMS]],
+        myths=common_myths(recent, []),
+    )
 
 
 async def recommend(
     items: list[FeedItem], recent: list[str], language: str | None, llm: StructuredLLM | None
 ) -> ForYou:
+    """Fact-checks as myth busters: the myth, the verdict, the truth, and the article.
+
+    With no history the AI picks widely shared rumors; with history, ones like what was checked.
+    The AI only restates what each article's headline and summary say; it never adds facts.
+    """
     recent = [r.strip()[:300] for r in recent if r.strip()][:10]
     if not items:
-        return ForYou(topics=[], items=[])
-    if not recent:
-        return latest(items, language)
+        return ForYou(topics=[], items=[], myths=common_myths(recent, []))
     if llm is None:
-        return overlap_ranking(items, recent, language)
-    pool = _by_language(items, language)[:80]
-    listing = "\n".join(f"{n}. [{i.publisher}] {i.title}" for n, i in enumerate(pool))
-    checked = "\n".join(f"- {r}" for r in recent)
+        return overlap_ranking(items, recent, language) if recent else latest(items, language)
+    pool = _by_language(items, language)[:60]
+    listing = "\n".join(
+        f"{n}. [{i.publisher}] {i.title}\n   {_clean(i.summary, 200)}" for n, i in enumerate(pool)
+    )
+    checked = "\n".join(f"- {r}" for r in recent) or "(nothing yet)"
     try:
         async with asyncio.timeout(AI_BUDGET_S):  # a busy AI never keeps the tab waiting
             out = await llm.structured(
@@ -211,18 +283,29 @@ async def recommend(
                 ),
                 output=_Picks,
                 effort="low",
-                max_tokens=1500,
+                max_tokens=3000,
             )
     except Exception as exc:
-        log.warning("for_you_llm_failed", error=type(exc).__name__)
-        return overlap_ranking(items, recent, language)
+        log.warning("for_you_llm_failed", error=type(exc).__name__, detail=str(exc)[:200])
+        return overlap_ranking(items, recent, language) if recent else latest(items, language)
     seen: set[int] = set()
     picked: list[Recommendation] = []
     for pick in out.picks:
         if 0 <= pick.index < len(pool) and pick.index not in seen:
             seen.add(pick.index)
-            picked.append(Recommendation(**pool[pick.index].model_dump(), why=pick.why.strip()))
+            item = pool[pick.index]
+            fallback = guess(item)
+            picked.append(
+                Recommendation(
+                    **item.model_dump(),
+                    why=pick.why.strip(),
+                    myth=pick.myth.strip(),
+                    # A verdict needs a myth to be about; otherwise keep only what the text says.
+                    verdict=_verdict(pick.verdict) if pick.myth.strip() else fallback.verdict,
+                    truth=pick.truth.strip() or item.summary,
+                )
+            )
     if not picked:
-        return overlap_ranking(items, recent, language)
-    topics = [t.strip() for t in out.topics if t.strip()][:4]
-    return ForYou(topics=topics, items=picked[:MAX_ITEMS])
+        return overlap_ranking(items, recent, language) if recent else latest(items, language)
+    topics = [t.strip() for t in out.topics if t.strip()][:4] if recent else []
+    return ForYou(topics=topics, items=picked[:MAX_ITEMS], myths=common_myths(recent, topics))

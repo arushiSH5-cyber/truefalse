@@ -2,11 +2,12 @@
 
 import { useEffect, useState } from "react";
 import Doodle from "@/components/Doodle";
-import { cardUrl, getJob, sendFeedback, type AISignal, type JobRecord, type PublicResult } from "@/lib/api";
+import { cardUrl, getJob, sendFeedback, translateTexts, type AISignal, type JobRecord, type PublicResult } from "@/lib/api";
 import { copyText, isWebUrl } from "@/lib/browser";
 import { DEMO } from "@/lib/demo";
 import { saveCheck, savedCheck } from "@/lib/history";
 import { labelsFor, useLabels, type Labels } from "@/lib/i18n";
+import { LANGS } from "@/lib/lang";
 import { VERDICTS } from "@/lib/verdicts";
 
 const STRENGTH: Record<AISignal["strength"], string> = {
@@ -101,7 +102,88 @@ export default function ResultView({ id: param }: { id: string }) {
       </State>
     );
   }
-  return <Receipt id={id} result={job.result} t={t} />;
+  return <Translatable id={id} result={job.result} t={t} />;
+}
+
+/** The answer, with a Translate picker that re-words it in another language (sources stay). */
+function Translatable({ id, result, t }: { id: string; result: PublicResult; t: Labels }) {
+  const [shown, setShown] = useState(result);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(false);
+
+  useEffect(() => setShown(result), [result]);
+
+  async function to(language: string) {
+    if (!language) return setShown(result);
+    setBusy(true);
+    setError(false);
+    const r = result;
+    const claims = r.claim_results ?? [];
+    const texts = [
+      r.verdict_label,
+      r.explanation,
+      r.correction,
+      r.confidence_label,
+      r.sources_heading,
+      r.forward_heading,
+      r.reply_text,
+      ...r.claims,
+      ...r.warnings,
+      ...claims.map((c) => c.claim),
+    ];
+    try {
+      const out = await translateTexts(texts, language);
+      let n = 7;
+      const take = (k: number) => out.slice(n, (n += k));
+      const newClaims = take(r.claims.length);
+      const newWarnings = take(r.warnings.length);
+      const newResults = take(claims.length);
+      setShown({
+        ...r,
+        language,
+        verdict_label: out[0],
+        explanation: out[1],
+        correction: out[2],
+        confidence_label: out[3],
+        sources_heading: out[4],
+        forward_heading: out[5],
+        reply_text: out[6],
+        claims: newClaims,
+        warnings: newWarnings,
+        claim_results: claims.map((c, i) => ({ ...c, claim: newResults[i] })),
+      });
+    } catch {
+      setError(true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <>
+      <div className="row translate-bar">
+        <label className="small" htmlFor="translate-to">
+          🌐 {busy ? t.translating : t.translate}
+        </label>
+        <select
+          id="translate-to"
+          className="lang-select"
+          disabled={busy}
+          defaultValue=""
+          onChange={(e) => to(e.target.value)}
+        >
+          <option value="">{t.languageAuto}</option>
+          {LANGS.map((l) => (
+            <option key={l.code} value={l.code}>
+              {l.name}
+            </option>
+          ))}
+        </select>
+        {error && <span className="small soft">{t.translateFailed}</span>}
+      </div>
+      <Receipt id={id} result={shown} t={t} />
+    </>
+  );
 }
 
 function Receipt({ id, result: r, t }: { id: string; result: PublicResult; t: Labels }) {

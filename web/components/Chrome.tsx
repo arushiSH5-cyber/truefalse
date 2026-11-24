@@ -5,12 +5,17 @@ import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import Doodle from "@/components/Doodle";
 import { useLabels } from "@/lib/i18n";
+import { LANGS, pickLanguage, pickedLanguage } from "@/lib/lang";
 
 export function TopBar() {
   const t = useLabels();
   const [night, setNight] = useState(false);
+  const [lang, setLang] = useState("");
 
-  useEffect(() => setNight(document.documentElement.dataset.theme === "night"), []);
+  useEffect(() => {
+    setNight(document.documentElement.dataset.theme === "night");
+    setLang(pickedLanguage());
+  }, []);
 
   function flip() {
     const theme = night ? "day" : "night";
@@ -29,9 +34,27 @@ export function TopBar() {
         <Doodle name="scout-happy" size={48} />
         TrueFalse
       </Link>
-      <button type="button" className="round" onClick={flip} aria-label={night ? t.dayMode : t.nightMode}>
-        <Doodle name={night ? "sun" : "moon"} size={34} />
-      </button>
+      <div className="topbar-actions">
+        <select
+          className="lang-select"
+          aria-label={t.language}
+          value={lang}
+          onChange={(e) => {
+            setLang(e.target.value);
+            pickLanguage(e.target.value);
+          }}
+        >
+          <option value="">🌐 {t.languageAuto}</option>
+          {LANGS.map((l) => (
+            <option key={l.code} value={l.code}>
+              {l.name}
+            </option>
+          ))}
+        </select>
+        <button type="button" className="round" onClick={flip} aria-label={night ? t.dayMode : t.nightMode}>
+          <Doodle name={night ? "sun" : "moon"} size={34} />
+        </button>
+      </div>
     </header>
   );
 }

@@ -1,4 +1,5 @@
 import { DEMO, demoJob } from "@/lib/demo";
+import { pickedLanguage } from "@/lib/lang";
 
 export type Verdict = "true" | "misleading" | "false" | "unverified";
 
@@ -85,6 +86,8 @@ export function clientId(): string {
 }
 
 export async function submitCheck(form: FormData): Promise<string> {
+  const lang = pickedLanguage();
+  if (lang && !form.has("reply_language")) form.append("reply_language", lang);
   const res = await fetch(`${API_URL}/api/check`, {
     method: "POST",
     body: form,
@@ -125,11 +128,26 @@ export interface ForYouItem {
   summary: string;
   published: number | null;
   why: string;
+  myth: string;
+  verdict: "false" | "misleading" | "true" | "mixed" | "";
+  truth: string;
 }
 
 export interface ForYouResult {
   topics: string[];
   items: ForYouItem[];
+  myths?: ForYouItem[];
+}
+
+/** Any texts (an answer, For you cards) in another language; same order back. */
+export async function translateTexts(texts: string[], language: string): Promise<string[]> {
+  const res = await fetch(`${API_URL}/api/translate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Client-Id": clientId() },
+    body: JSON.stringify({ texts, language }),
+  });
+  if (!res.ok) throw new Error(String(res.status));
+  return ((await res.json()) as { texts: string[] }).texts;
 }
 
 /** Fact-checks picked from the claims in "My checks" (sent, never stored by the server). */
