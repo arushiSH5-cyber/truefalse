@@ -12,7 +12,11 @@ const nextConfig = {
     : {
         async rewrites() {
           const api = process.env.API_URL ?? "http://127.0.0.1:8000";
-          return [{ source: "/backend/api/:path*", destination: `${api}/api/:path*` }];
+          return [
+            { source: "/backend/api/:path*", destination: `${api}/api/:path*` },
+            // WhatsApp, Instagram and Messenger call these through the public link.
+            { source: "/webhooks/:path*", destination: `${api}/webhooks/:path*` },
+          ];
         },
         async headers() {
           return [{ source: "/sw.js", headers: [{ key: "Cache-Control", value: "no-cache" }] }];

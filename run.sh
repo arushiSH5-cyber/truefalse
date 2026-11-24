@@ -7,6 +7,27 @@ set -euo pipefail
 
 # Everything is inside main(), so bash reads the whole file before running any of it. Then
 # updating this file (git pull, switching branches) can't break a copy that is already running.
+env_value() { { grep -E "^$1=" .env || true; } | tail -1 | cut -d= -f2- | sed 's/ #.*//' | tr -d '[:space:]'; }
+
+# Webhook addresses for the chat apps that have a token in .env, to paste into Meta's dashboard.
+chat_apps() {
+  local link="$1" shown=""
+  for app in whatsapp instagram messenger; do
+    case $app in
+      whatsapp) token=$(env_value WHATSAPP_TOKEN); name=WhatsApp ;;
+      instagram) token=$(env_value INSTAGRAM_TOKEN); name=Instagram ;;
+      messenger) token=$(env_value MESSENGER_PAGE_TOKEN); name=Messenger ;;
+    esac
+    [ -n "$token" ] || continue
+    upper=$(echo "$app" | tr a-z A-Z)
+    [ -z "$shown" ] && { echo "  Chat apps: paste these into Meta's webhook settings (they change each run):"; shown=1; }
+    echo "    $name  callback URL: $link/webhooks/$app"
+    echo "    $name  verify token: $(env_value "${upper}_VERIFY_TOKEN")"
+  done
+  [ -n "$shown" ] && echo
+  return 0
+}
+
 main() {
 cd "$(dirname "$0")"
 
@@ -31,6 +52,28 @@ for port in "$API_PORT" "$WEB_PORT"; do
   fi
 done
 [ -f .env ] || { echo "No .env yet. Run: cp .env.example .env"; exit 1; }
+# Webhook verify tokens are just random strings you paste into Meta's dashboard: make any missing.
+python3 - <<'PY'
+import os, re, secrets, tempfile
+names = ("WHATSAPP_VERIFY_TOKEN", "INSTAGRAM_VERIFY_TOKEN", "MESSENGER_VERIFY_TOKEN")
+lines = open(".env").read().splitlines()
+changed = False
+for name in names:
+    at = [i for i, l in enumerate(lines) if l.startswith(name + "=")]
+    if at and lines[at[-1]].split("=", 1)[1].strip():
+        continue
+    value = f"{name}={secrets.token_urlsafe(18)}"
+    if at:
+        lines[at[-1]] = value
+    else:
+        lines.append(value)
+    changed = True
+if changed:
+    fd, tmp = tempfile.mkstemp(dir=".", prefix=".env.")
+    with os.fdopen(fd, "w") as f:
+        f.write("\n".join(lines) + "\n")
+    os.replace(tmp, ".env")
+PY
 
 echo "Getting ready..."
 (cd backend && uv sync --quiet --python 3.12 --frozen --extra media)
@@ -79,6 +122,7 @@ if [ "$MODE" = "--share" ]; then
     echo
     echo "  Anyone with the link can check things using your Gemini key,"
     echo "  up to ${LIMIT:-100} checks a day. A new link is made each time you start this."
+    chat_apps "$LINK"
   fi
 fi
 if [ "$HOST" = 0.0.0.0 ]; then

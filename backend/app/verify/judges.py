@@ -203,6 +203,7 @@ def decide(
     )
     cited_ids = list(dict.fromkeys(e for v in agreeing for e in v.cited_evidence_ids))
     cited = [evidence[e] for e in cited_ids]
+    shown_ids = shared_citations(agreeing, cited_ids)
     features = Features(
         agreement=agreement,
         best_tier=min(e.tier for e in cited),
@@ -228,10 +229,23 @@ def decide(
         update={
             "verdict": majority,
             "confidence": confidence_for(p),
-            "cited_evidence_ids": cited_ids,
+            "cited_evidence_ids": shown_ids,
         }
     )
     return result(enforce_core_rule(final, evidence), p, agreement, False)
+
+
+def shared_citations(agreeing: Sequence[ClaimJudgement], cited_ids: list[str]) -> list[str]:
+    """Sources to show: the ones two or more agreeing judges cited, when there are any.
+
+    A source only one judge cited is often off-topic (a page that shares a word with the
+    claim), so it is left out of what people see. The verdict still weighs them all.
+    """
+    if len(agreeing) < 2:
+        return cited_ids
+    counts = Counter(e for v in agreeing for e in dict.fromkeys(v.cited_evidence_ids))
+    shared = [e for e in cited_ids if counts[e] >= 2]
+    return shared or cited_ids
 
 
 def _evidence_block(evidence: Sequence[Evidence]) -> str:

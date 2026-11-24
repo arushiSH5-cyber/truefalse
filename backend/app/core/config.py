@@ -48,6 +48,14 @@ class Settings(BaseSettings):
     whatsapp_app_secret: SecretStr | None = None  # verifies X-Hub-Signature-256
     whatsapp_verify_token: SecretStr | None = None  # webhook GET handshake
     whatsapp_api_version: str = "v26.0"
+    # Instagram DMs (Instagram API with Instagram Login) and Facebook Messenger (Page).
+    instagram_token: SecretStr | None = None
+    instagram_app_secret: SecretStr | None = None
+    instagram_verify_token: SecretStr | None = None
+    messenger_page_token: SecretStr | None = None
+    messenger_app_secret: SecretStr | None = None
+    messenger_verify_token: SecretStr | None = None
+    meta_api_version: str = "v26.0"
 
     # Web app / PWA / extension (Phase 7)
     web_origins: str = "http://localhost:3000"  # comma-separated CORS origins

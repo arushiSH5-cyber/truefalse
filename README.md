@@ -40,6 +40,27 @@ works on any phone, with uploads and real answers, while that window stays open.
 
 Use `./run.sh --phone` to open it on a phone on the same Wi-Fi instead.
 
+## Use it inside WhatsApp, Instagram and other apps
+
+**Share button (any app, no setup).** On Android, open the `--share` link, tap "Add to Home
+screen", then in WhatsApp, Instagram, TikTok, X or YouTube tap **Share → TrueFalse** on any
+message, photo, video or post. On iPhone, copy or screenshot it and open TrueFalse.
+
+**Chat bots.** People message TrueFalse in WhatsApp, Instagram DMs or Facebook Messenger and get
+the answer back in the chat. Each needs a free Meta developer app
+([developers.facebook.com](https://developers.facebook.com/apps)) with that product added:
+
+| App | What to copy into `.env` | Where |
+|---|---|---|
+| WhatsApp | `WHATSAPP_TOKEN`, `WHATSAPP_PHONE_ID`, `WHATSAPP_APP_SECRET` | WhatsApp > API Setup; App settings > Basic |
+| Instagram | `INSTAGRAM_TOKEN`, `INSTAGRAM_APP_SECRET` | Instagram > API setup with Instagram login (needs a free Creator or Business account) |
+| Messenger | `MESSENGER_PAGE_TOKEN`, `MESSENGER_APP_SECRET` | Messenger > API Setup (needs a Facebook Page) |
+
+Copy the lines as `NAME=value`, run `python3 scripts/set_key.py`, then `./run.sh --share`. It
+prints a callback URL and verify token for each app: paste them into that app's **Webhooks**
+settings and subscribe to `messages`. While the Meta app is in development mode, only people you
+add as testers can message the bot.
+
 ## What's in here
 
 | Folder | What it is |

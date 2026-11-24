@@ -234,7 +234,8 @@ async def test_panel_survives_one_failed_judge() -> None:
     )
     (d,) = await judge(llm, [CLAIM], list(EVIDENCE.values()))
     assert d.judgement.verdict is V.FALSE and d.votes == [V.FALSE, V.FALSE]
-    assert d.judgement.cited_evidence_ids == ["E1", "E2"]
+    # Only the source both judges cited is shown.
+    assert d.judgement.cited_evidence_ids == ["E1"]
 
 
 async def test_panel_judges_use_different_prompts() -> None:

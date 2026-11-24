@@ -197,6 +197,16 @@ def build_platforms(
         )
         messengers[Platform.WHATSAPP] = wa
         fetchers[Platform.WHATSAPP] = wa
+    from app.ingestion.meta_dm import MetaDMClient
+
+    for platform, dm_token in (
+        (Platform.INSTAGRAM, _secret(settings.instagram_token)),
+        (Platform.MESSENGER, _secret(settings.messenger_page_token)),
+    ):
+        if dm_token and dm_token.strip():
+            dm = MetaDMClient(http, dm_token.strip(), platform, settings.meta_api_version)
+            messengers[platform] = dm
+            fetchers[platform] = dm
     return messengers, fetchers
 
 

@@ -1,5 +1,5 @@
 from app.core.models import ClaimJudgement, Confidence, Evidence, SourceKind, Verdict
-from app.verify.judges import enforce_core_rule, overall_verdict
+from app.verify.judges import enforce_core_rule, overall_verdict, shared_citations
 
 
 def _ev(eid: str, tier: int) -> Evidence:
@@ -45,3 +45,16 @@ def test_overall_is_most_severe() -> None:
         is Verdict.UNVERIFIED
     )
     assert overall_verdict([]) == (Verdict.UNVERIFIED, Confidence.LOW)
+
+
+def test_shown_sources_are_the_ones_judges_agree_on() -> None:
+    a = _j(Verdict.FALSE, cited=("E1", "E2"))
+    b = _j(Verdict.FALSE, cited=("E1", "E3"))
+    assert shared_citations([a, b], ["E1", "E2", "E3"]) == ["E1"]
+
+
+def test_shown_sources_fall_back_when_judges_share_none() -> None:
+    a = _j(Verdict.FALSE, cited=("E1",))
+    b = _j(Verdict.FALSE, cited=("E2",))
+    assert shared_citations([a, b], ["E1", "E2"]) == ["E1", "E2"]
+    assert shared_citations([a], ["E1"]) == ["E1"]

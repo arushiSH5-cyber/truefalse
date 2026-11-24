@@ -23,6 +23,13 @@ NAMES = (
     "GOOGLE_FACTCHECK_API_KEY",
     "SEMANTIC_SCHOLAR_API_KEY",
     "NCBI_API_KEY",
+    "WHATSAPP_TOKEN",
+    "WHATSAPP_PHONE_ID",
+    "WHATSAPP_APP_SECRET",
+    "INSTAGRAM_TOKEN",
+    "INSTAGRAM_APP_SECRET",
+    "MESSENGER_PAGE_TOKEN",
+    "MESSENGER_APP_SECRET",
 )
 BARE = {
     "GEMINI_API_KEY": re.compile(
@@ -36,7 +43,7 @@ def find_keys(text):
     found = {}
     for name in NAMES:
         match = re.search(
-            rf"(?<!\w){name}[ \t]*=[ \t]*[\"']?([A-Za-z0-9_.\-]{{16,}})", text
+            rf"(?<!\w){name}[ \t]*=[ \t]*[\"']?([A-Za-z0-9_.\-]{{10,}})", text
         )
         if match:
             found[name] = match.group(1)
