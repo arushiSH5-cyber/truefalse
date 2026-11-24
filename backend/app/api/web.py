@@ -18,12 +18,14 @@ from pydantic import BaseModel, Field
 from app.api.telegram import get_queue, get_reviews
 from app.core.config import Settings, get_settings
 from app.core.jobs import MAX_UPLOAD_BYTES, JobRecord, JobStore, RedisJobStore
+from app.core.llm import StructuredLLM
 from app.core.models import Part, PartKind, Platform, ReplyTarget, Submission
 from app.core.ratelimit import RateLimiter, RedisRateLimiter
 from app.core.review import ReviewStore, clean_note, item_from_public
 from app.ingestion.base import JobQueue
 from app.ingestion.common import hash_user
 from app.ingestion.handler import CHECK_JOB
+from app.recommend import FeedCache, ForYou
 from app.respond.share_card import render_card
 
 router = APIRouter(prefix="/api", tags=["web"])
@@ -184,3 +186,68 @@ async def feedback(
     item.note = clean_note(body.note)
     await reviews.add(item)
     return {"status": "queued_for_review", "review_id": item.id}
+
+
+# ---- For you ----------------------------------------------------------------------------------
+
+FOR_YOU_PER_HOUR = 30
+FOR_YOU_TTL_S = 1800
+
+
+class ForYouRequest(BaseModel):
+    recent: list[str] = Field(default_factory=list, max_length=10)
+    language: str | None = Field(default=None, max_length=20)
+
+
+@lru_cache
+def _feeds() -> FeedCache:
+    import httpx
+
+    return FeedCache(
+        httpx.AsyncClient(headers={"User-Agent": "Mozilla/5.0 (compatible; fact-check-client/1.0)"})
+    )
+
+
+def get_feeds() -> FeedCache:
+    return _feeds()
+
+
+_for_you_cache: dict[tuple[tuple[str, ...], str], tuple[float, ForYou]] = {}
+
+
+def _engine(settings: Settings, http: object) -> StructuredLLM | None:
+    from app.core.container import build_deps
+
+    try:
+        return build_deps(settings, http).llm  # type: ignore[arg-type]
+    except Exception:
+        return None  # no AI key: word-overlap ranking still works
+
+
+@router.post("/for-you")
+async def for_you(
+    body: ForYouRequest,
+    settings: Annotated[Settings, Depends(get_settings)],
+    limiter: Annotated[RateLimiter, Depends(get_limiter)],
+    feeds: Annotated[FeedCache, Depends(get_feeds)],
+    client_id: Annotated[str, Header(alias="X-Client-Id", min_length=8, max_length=64)],
+) -> ForYou:
+    """Recent fact-checks from real fact-checkers that match what this person checked."""
+    import time
+
+    from app.recommend import recommend
+
+    recent = tuple(r.strip()[:300] for r in body.recent if r.strip())
+    key = (recent, (body.language or "en").lower())
+    cached = _for_you_cache.get(key)
+    if cached and time.time() - cached[0] < FOR_YOU_TTL_S:
+        return cached[1]
+    user_hash = hash_user(settings.user_hash_salt.get_secret_value(), "web", client_id)
+    use_ai = await limiter.allow(f"foryou:{user_hash}", FOR_YOU_PER_HOUR)
+    items = await feeds.items()
+    llm = _engine(settings, feeds.http) if use_ai and recent else None
+    result = await recommend(items, list(recent), body.language, llm)
+    if len(_for_you_cache) > 500:
+        _for_you_cache.clear()
+    _for_you_cache[key] = (time.time(), result)
+    return result

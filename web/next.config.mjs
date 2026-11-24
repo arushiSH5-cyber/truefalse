@@ -1,4 +1,6 @@
-const demo = process.env.NEXT_PUBLIC_DEMO === "1";
+// A static build: the demo (saved answers) or the real app calling a hosted checker
+// (NEXT_PUBLIC_STATIC=1 with NEXT_PUBLIC_API_URL). Either way there is no Next.js server.
+const demo = process.env.NEXT_PUBLIC_DEMO === "1" || process.env.NEXT_PUBLIC_STATIC === "1";
 const basePath = process.env.NEXT_PUBLIC_BASE_PATH || undefined;
 
 /** @type {import('next').NextConfig} */

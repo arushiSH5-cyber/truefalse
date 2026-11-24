@@ -41,6 +41,7 @@ export function Tabs() {
   const at = usePathname();
   const tabs = [
     { href: "/", icon: "magnifier", label: t.navCheck, here: at === "/" || at.startsWith("/result") },
+    { href: "/for-you", icon: "heart", label: t.navForYou, here: at.startsWith("/for-you") },
     { href: "/history", icon: "book", label: t.navHistory, here: at.startsWith("/history") },
   ];
   return (

@@ -272,9 +272,11 @@ def create_local_app(queue: Any = None) -> FastAPI:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", type=int, default=8000)
+    # Loopback by default: phones reach it through the web app's /backend proxy. A hosted
+    # checker (Render) passes --host 0.0.0.0 so the web app on GitHub Pages can call it.
+    parser.add_argument("--host", default="127.0.0.1")
     args = parser.parse_args()
-    # Loopback only: phones reach it through the web app's /backend proxy.
-    uvicorn.run(create_local_app(), host="127.0.0.1", port=args.port, access_log=False)
+    uvicorn.run(create_local_app(), host=args.host, port=args.port, access_log=False)
 
 
 if __name__ == "__main__":

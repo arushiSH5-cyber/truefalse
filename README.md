@@ -23,6 +23,15 @@ If no source backs an answer, it says **Unverified** instead of guessing.
 Scan with your phone's camera, then "Add to Home Screen" to install it like an app. The online
 demo shows saved example answers. To check your own messages, run it on your laptop (below).
 
+## Host it for free (always on)
+
+The web app runs on GitHub Pages and the checker on [Render](https://render.com)'s free plan
+(no card needed). In Render: **New > Blueprint**, pick this repo, paste your Gemini key when it
+asks. Then copy the service address (like `https://truefalse.onrender.com`) into this repo's
+**Settings > Secrets and variables > Actions > Variables** as `TRUEFALSE_API_URL`, and rerun the
+"Web app site" action. The free checker sleeps after 15 quiet minutes; the next check wakes it in
+about a minute.
+
 ## Run it on your laptop
 
 You need [Node](https://nodejs.org), [uv](https://docs.astral.sh/uv/) and ffmpeg (for voice, video and iPhone photos)

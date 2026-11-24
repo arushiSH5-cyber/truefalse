@@ -6,6 +6,7 @@ import Camera from "@/components/Camera";
 import Doodle from "@/components/Doodle";
 import { getStatus, submitCheck } from "@/lib/api";
 import { fitPhoto } from "@/lib/browser";
+import { STATIC } from "@/lib/demo";
 import { useLabels } from "@/lib/i18n";
 
 const MAX_BYTES = 20 * 1024 * 1024;
@@ -19,6 +20,7 @@ export default function CheckForm() {
   const [preview, setPreview] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [slowStart, setSlowStart] = useState(false);
   const [camera, setCamera] = useState(false);
   const [recording, setRecording] = useState(false);
   const [server, setServer] = useState<"ok" | "no-key" | "down">("ok");
@@ -29,7 +31,15 @@ export default function CheckForm() {
 
   useEffect(() => {
     // The share target sends people back here with ?error=<status>.
-    if (new URLSearchParams(location.search).has("error")) setError(t.shareFailed);
+    const params = new URLSearchParams(location.search);
+    if (params.has("error")) setError(t.shareFailed);
+    // "Check it" on the For you tab opens this form with the headline filled in.
+    // The static site's Share target also arrives here, as ?title=&text=&url=.
+    const prefill = ["title", "text", "url"]
+      .map((k) => params.get(k)?.trim())
+      .filter(Boolean)
+      .join("\n");
+    if (prefill) setText(prefill.slice(0, 2000));
   }, [t]);
 
   useEffect(() => {
@@ -103,6 +113,13 @@ export default function CheckForm() {
     }
   }
 
+  // The free hosted checker sleeps when nobody uses it; the first check wakes it (about a minute).
+  useEffect(() => {
+    if (!busy) return setSlowStart(false);
+    const timer = setTimeout(() => setSlowStart(true), 5000);
+    return () => clearTimeout(timer);
+  }, [busy]);
+
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
@@ -117,7 +134,8 @@ export default function CheckForm() {
       const form = new FormData();
       form.set("text", text);
       if (ready) form.set("file", ready);
-      router.push(`/result/${await submitCheck(form)}`);
+      const id = await submitCheck(form);
+      router.push(STATIC ? `/result/saved/?id=${id}` : `/result/${id}`);
     } catch (err) {
       setError(err instanceof TypeError ? t.serverDown : err instanceof Error ? err.message : t.genericError);
       setBusy(false);
@@ -204,6 +222,11 @@ export default function CheckForm() {
           <Doodle name="magnifier" size={34} />
           {busy ? t.sending : t.checkIt}
         </button>
+        {slowStart && (
+          <p className="small soft" aria-live="polite">
+            {t.wakingUp}
+          </p>
+        )}
       </div>
 
       {camera && (
