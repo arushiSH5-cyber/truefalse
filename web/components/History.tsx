@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import Doodle from "@/components/Doodle";
-import { DEMO } from "@/lib/demo";
+import { STATIC } from "@/lib/demo";
 import { forgetAll, forgetCheck, savedChecks, type SavedCheck } from "@/lib/history";
 import { useLabels } from "@/lib/i18n";
 import { headlineClaim, VERDICTS } from "@/lib/verdicts";
@@ -36,7 +36,7 @@ export default function History() {
             {list.map(({ id, at, result }) => (
               <li key={id} className={VERDICTS[result.verdict].pattern}>
                 {/* A plain link to one precached page, so saved receipts also open offline. */}
-                <a href={`${BASE}/result/saved${DEMO ? "/" : ""}?id=${id}`}>
+                <a href={`${BASE}/result/saved${STATIC ? "/" : ""}?id=${id}`}>
                   <Doodle name={VERDICTS[result.verdict].buddy} size={64} />
                   <span className="min-w-0">
                     <strong className="block">{result.verdict_label}</strong>

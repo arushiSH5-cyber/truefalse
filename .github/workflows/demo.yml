@@ -1,10 +1,12 @@
-name: Demo site
+name: Web app site
 
-# Publishes the web app's demo build (saved example answers, no backend) to GitHub Pages.
+# Publishes the web app to GitHub Pages. With the repository variable TRUEFALSE_API_URL set
+# (the hosted checker, e.g. on Render), it is the real app; without it, the saved-answers demo.
 on:
   push:
     branches: [main]
     paths: ["web/**", ".github/workflows/demo.yml"]
+  # (also run by hand after setting TRUEFALSE_API_URL)
   workflow_dispatch:
 
 permissions:
@@ -32,11 +34,14 @@ jobs:
       - run: npm ci
       # The share target is a server route; a static site can't have one.
       - run: rm -rf app/share
-      - name: Drop the share target from the manifest
-        run: node -e 'const fs=require("fs"),f="public/manifest.webmanifest",m=JSON.parse(fs.readFileSync(f,"utf8"));delete m.share_target;fs.writeFileSync(f,JSON.stringify(m,null,2))'
+      # Shared text and links arrive as ?title=&text=&url= on the home page (files need a server).
+      - name: Static share target
+        run: node -e 'const fs=require("fs"),f="public/manifest.webmanifest",m=JSON.parse(fs.readFileSync(f,"utf8"));m.share_target={action:"./",method:"GET",params:{title:"title",text:"text",url:"url"}};fs.writeFileSync(f,JSON.stringify(m,null,2))'
       - run: npx next build
         env:
-          NEXT_PUBLIC_DEMO: "1"
+          NEXT_PUBLIC_DEMO: ${{ vars.TRUEFALSE_API_URL == '' && '1' || '' }}
+          NEXT_PUBLIC_STATIC: "1"
+          NEXT_PUBLIC_API_URL: ${{ vars.TRUEFALSE_API_URL }}
           NEXT_PUBLIC_BASE_PATH: /truefalse
       - run: touch out/.nojekyll
       - uses: actions/upload-pages-artifact@v3

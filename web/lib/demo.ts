@@ -5,6 +5,8 @@
 import type { JobRecord, PublicResult } from "@/lib/api";
 
 export const DEMO = process.env.NEXT_PUBLIC_DEMO === "1";
+/** A static site (GitHub Pages): the demo, or the real app talking to a hosted checker. */
+export const STATIC = DEMO || process.env.NEXT_PUBLIC_STATIC === "1";
 export const REPO_URL = "https://github.com/arushiSH5-cyber/truefalse";
 
 const WHO_MYTHS = {

@@ -1,8 +1,8 @@
 // Installable app + offline shell. API answers, uploads and shares are never cached.
 // Works at the site root (local app) and under a path (the GitHub Pages demo).
-const CACHE = "truefalse-shell-v4";
+const CACHE = "truefalse-shell-v5";
 const BASE = new URL(self.registration.scope).pathname; // "/" or "/truefalse/"
-const PAGES = ["", "history", "result/saved"]; // "" (home) must cache; the others may not exist
+const PAGES = ["", "history", "for-you", "result/saved"]; // "" (home) must cache; the others may not exist
 const DOODLES = [
   "scout-happy", "scout-think", "scout-sad", "scout-sleep", "mochi-happy", "pudding-think",
   "pudding-sleep", "berry-wow", "luna-sleep", "camera", "photo", "mic", "magnifier", "book",

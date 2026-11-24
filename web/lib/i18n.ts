@@ -61,6 +61,7 @@ const EN = {
   forYouCheck: "Check it",
   forYouFailed: "Couldn't load fact-checks right now. Please try again.",
   forYouAgain: "Try again",
+  wakingUp: "Waking up the checker. The first check after a quiet spell can take about a minute.",
   takePhoto: "Take a picture",
   upload: "Upload",
   record: "Voice note",

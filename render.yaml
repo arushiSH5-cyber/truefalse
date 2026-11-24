@@ -1,0 +1,22 @@
+# Render Blueprint: the free hosted checker. In Render: New > Blueprint > pick this repo.
+# It asks for GEMINI_API_KEY once; paste your key there (it's stored by Render, not in git).
+services:
+  - type: web
+    name: truefalse
+    runtime: docker
+    plan: free
+    dockerfilePath: ./deploy/Dockerfile.checker
+    dockerContext: .
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: WEB_ORIGINS
+        value: https://arushish5-cyber.github.io,http://localhost:3200
+      - key: USER_HASH_SALT
+        generateValue: true
+      - key: DAILY_CHECK_LIMIT
+        value: "100"
+      - key: PORT
+        value: "8000"
