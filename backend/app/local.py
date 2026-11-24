@@ -22,10 +22,11 @@ from pydantic import BaseModel
 
 from app.api import health, telegram, web
 from app.core.config import Settings, get_settings
-from app.core.container import build_deps, build_platforms
+from app.core.container import build_deps, build_platforms, build_translator
 from app.core.jobs import RESULT_TTL_S, UPLOAD_TTL_S, InMemoryJobStore, JobRecord
 from app.core.logging import get_logger
 from app.core.models import Claim, Platform, ReplyTarget
+from app.core.prefs import InMemoryPrefsStore
 from app.core.ratelimit import InMemoryRateLimiter
 from app.core.review import REVIEW_TTL_S, InMemoryReviewStore
 from app.ingestion.router import RoutingMessenger
@@ -113,8 +114,11 @@ class ExpiringVerdictCache(InMemoryVerdictCache):
 class LocalRunner:
     """JobQueue that runs each check in this process, two at a time."""
 
-    def __init__(self, http: httpx.AsyncClient, jobs: ExpiringJobStore) -> None:
+    def __init__(
+        self, http: httpx.AsyncClient, jobs: ExpiringJobStore, daily: "DailyLimit | None" = None
+    ) -> None:
         self.http = http
+        self.daily = daily
         self.jobs = jobs
         self.reviews = InMemoryReviewStore()
         self.verdicts = ExpiringVerdictCache(load_settings().verdict_cache_ttl_days)
@@ -138,6 +142,15 @@ class LocalRunner:
                 deps = build_deps(settings, self.http, fetchers=fetchers)
                 deps.verdicts = self.verdicts
                 prices = (settings.llm_input_price_per_mtok, settings.llm_output_price_per_mtok)
+                target = ReplyTarget.model_validate(payload["target"])
+                # Web checks are counted when they arrive; chat-app checks are counted here.
+                if (
+                    target.platform is not Platform.WEB
+                    and self.daily
+                    and not self.daily.take(settings.daily_check_limit)
+                ):
+                    await RoutingMessenger(messengers).send_text(target, DAILY_LIMIT)
+                    return
                 async with asyncio.timeout(CHECK_TIMEOUT_S):
                     await process(
                         payload,
@@ -192,7 +205,8 @@ def create_local_app(queue: Any = None) -> FastAPI:
     limiter = InMemoryRateLimiter()
     daily = DailyLimit()
     http = httpx.AsyncClient(timeout=10, headers={"User-Agent": USER_AGENT}, follow_redirects=True)
-    runner = LocalRunner(http, jobs)
+    runner = LocalRunner(http, jobs, daily)
+    prefs = InMemoryPrefsStore()  # chat apps: language and voice choices, until restart
     queue = queue or runner  # tests pass a fake queue
 
     app.dependency_overrides.update(
@@ -200,6 +214,8 @@ def create_local_app(queue: Any = None) -> FastAPI:
             get_settings: load_settings,
             telegram.get_queue: lambda: queue,
             telegram.get_reviews: lambda: runner.reviews,
+            telegram.get_prefs: lambda: prefs,
+            telegram.get_translator: lambda: build_translator(load_settings()),
             web.get_jobs: lambda: jobs,
             web.get_limiter: lambda: limiter,
             health.get_checkers: lambda: {},

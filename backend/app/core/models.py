@@ -13,6 +13,8 @@ from app.ai_detect.signals import AIReport
 class Platform(StrEnum):
     TELEGRAM = "telegram"
     WHATSAPP = "whatsapp"
+    INSTAGRAM = "instagram"
+    MESSENGER = "messenger"
     WEB = "web"
 
 
