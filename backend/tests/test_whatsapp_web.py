@@ -305,3 +305,11 @@ def test_render_card_any_script(tmp_path, claim, label) -> None:
         font_dir=tmp_path,
     )
     assert Image.open(io.BytesIO(png)).size == (1080, 1080)
+
+
+def test_web_check_carries_the_chosen_language(env) -> None:
+    client, _, q, _ = env
+    r = client.post("/api/check", data={"text": "x", "reply_language": "hi"}, headers=HDR)
+    assert r.status_code == 202 and q.jobs[-1][1]["reply_language"] == "hi"
+    bad = client.post("/api/check", data={"text": "x", "reply_language": "<b>"}, headers=HDR)
+    assert bad.status_code == 422

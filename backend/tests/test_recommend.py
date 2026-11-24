@@ -6,7 +6,8 @@ from app.api.web import get_feeds, get_limiter
 from app.core.config import Settings, get_settings
 from app.core.ratelimit import InMemoryRateLimiter
 from app.main import create_app
-from app.recommend import FeedItem, _Pick, _Picks, parse_feed, recommend
+from app.myths import MYTHS
+from app.recommend import FeedItem, _Pick, _Picks, common_myths, guess, parse_feed, recommend
 
 RSS = """<?xml version="1.0"?><rss version="2.0"><channel>
 <item><title>Lemon water does not cure cancer</title><link>https://fc.example/lemon</link>
@@ -68,6 +69,7 @@ async def test_ai_can_only_pick_real_articles() -> None:
     assert [(i.url, i.why) for i in out.items] == [
         ("https://fc.example/lemon", "Also about cancer")
     ]
+    assert out.myths[0].myth == "Herbal remedies can cure cancer."  # closest common myth first
     assert (
         "Hot lemon water cures cancer" in llm.user
         and "Lemon water does not cure cancer" in llm.user
@@ -104,3 +106,48 @@ def test_endpoint_without_history_lists_latest() -> None:
     assert resp.status_code == 200
     assert len(resp.json()["items"]) == 3
     assert client.post("/api/for-you", json={}).status_code == 422  # needs a client id
+
+
+async def test_myth_busters_and_no_verdict_without_a_myth() -> None:
+    llm = PickingLLM(
+        _Picks(
+            picks=[
+                _Pick(
+                    index=0,
+                    myth="Lemon water cures cancer",
+                    verdict="false",
+                    truth="No study shows it.",
+                ),
+                _Pick(index=2, verdict="true", truth="News about voting."),  # no myth
+            ]
+        )
+    )
+    out = await recommend(_items(), [], "en", llm)  # type: ignore[arg-type]
+    first, second = out.items
+    assert (first.myth, first.verdict, first.truth) == (
+        "Lemon water cures cancer",
+        "false",
+        "No study shows it.",
+    )
+    assert second.verdict == "" and out.topics == []  # no history: no topics
+    assert "(nothing yet)" in llm.user and "No study shows it." in llm.user  # summaries sent
+
+
+def test_guess_only_trusts_explicit_words() -> None:
+    fake = FeedItem(
+        title="Fact Check: FAKE photo of storm", url="https://x", publisher="P", language="en"
+    )
+    news = FeedItem(title="TB cases fall in 2026", url="https://y", publisher="P", language="en")
+    spin = FeedItem(
+        title="Official spins vaccine study", url="https://z", publisher="P", language="en"
+    )
+    assert guess(fake).verdict == "false"
+    assert guess(news).verdict == ""
+    assert guess(spin).verdict == "misleading"
+
+
+def test_common_myths_rank_by_what_was_checked() -> None:
+    assert len(common_myths([], [])) == len(MYTHS)
+    top = common_myths(["Lightning struck my house twice"], [])[0]
+    assert top.publisher == "US National Weather Service" and top.verdict == "false"
+    assert all(m.url.startswith("https://") for m in MYTHS)

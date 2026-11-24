@@ -95,7 +95,9 @@ async def process(
         await messenger.send_typing(target)
 
     # Before the check finishes, the user's language is only known from prefs or the platform.
-    hint = (prefs.reply_language if prefs else None) or submission.language_hint
+    # A language picked in the web app wins, then the chat-app /language setting.
+    chosen = payload.get("reply_language") or (prefs.reply_language if prefs else None)
+    hint = chosen or submission.language_hint
 
     async def progress(kind: str) -> None:
         if kind == "media":
@@ -110,7 +112,7 @@ async def process(
             deps,
             trace,
             progress,
-            reply_language=prefs.reply_language if prefs else None,
+            reply_language=chosen,
         )
         text = report.reply_text
         status = "ok"

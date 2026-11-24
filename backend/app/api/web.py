@@ -4,6 +4,8 @@ POST /api/check            multipart: text?, url?, file?   header X-Client-Id (r
 GET  /api/check/{id}       job status, progress messages and the result
 GET  /api/check/{id}/card.png   shareable correction card
 POST /api/check/{id}/feedback   {"rating": "up"|"down", "note"?: str}; "down" goes to review
+POST /api/translate        {"language", "texts": [...]}: an answer or card, in another language
+POST /api/for-you          {"recent": [...], "language"}: myth busters picked for this person
 Job ids are random 128-bit values, so a result URL is only known to whoever created it.
 """
 
@@ -33,6 +35,8 @@ router = APIRouter(prefix="/api", tags=["web"])
 MEDIA_KINDS = {"image": PartKind.IMAGE, "audio": PartKind.AUDIO, "video": PartKind.VIDEO}
 MAX_TEXT = 10_000
 HEIC_SUFFIXES = (".heic", ".heif")
+LANGUAGE_RE = r"^([a-z]{2,3}(-[A-Za-z0-9]{2,8})?)?$"  # "", "es", "pt-BR", "zh-Hans"
+TRANSLATE_PER_HOUR = 60
 
 
 @lru_cache
@@ -74,6 +78,7 @@ async def create_check(
     url: Annotated[str, Form(max_length=2000)] = "",
     file: Annotated[UploadFile | None, File()] = None,
     accept_language: Annotated[str | None, Header()] = None,
+    reply_language: Annotated[str, Form(pattern=LANGUAGE_RE)] = "",
 ) -> dict[str, str]:
     salt = settings.user_hash_salt.get_secret_value()
     user_hash = hash_user(salt, "web", client_id)
@@ -112,6 +117,7 @@ async def create_check(
         {
             "submission": submission.model_dump(mode="json"),
             "target": target.model_dump(mode="json"),
+            "reply_language": reply_language or None,
         },
     )
     return {"id": job.id}
@@ -245,9 +251,55 @@ async def for_you(
     user_hash = hash_user(settings.user_hash_salt.get_secret_value(), "web", client_id)
     use_ai = await limiter.allow(f"foryou:{user_hash}", FOR_YOU_PER_HOUR)
     items = await feeds.items()
-    llm = _engine(settings, feeds.http) if use_ai and recent else None
+    llm = _engine(settings, feeds.http) if use_ai else None
     result = await recommend(items, list(recent), body.language, llm)
     if len(_for_you_cache) > 500:
         _for_you_cache.clear()
     _for_you_cache[key] = (time.time(), result)
     return result
+
+
+class TranslateRequest(BaseModel):
+    language: str = Field(pattern=LANGUAGE_RE, min_length=2)
+    texts: list[Annotated[str, Field(max_length=3000)]] = Field(max_length=40)
+
+
+class _Translated(BaseModel):
+    texts: list[str]
+
+
+@router.post("/translate")
+async def translate(
+    body: TranslateRequest,
+    settings: Annotated[Settings, Depends(get_settings)],
+    limiter: Annotated[RateLimiter, Depends(get_limiter)],
+    feeds: Annotated[FeedCache, Depends(get_feeds)],
+    client_id: Annotated[str, Header(alias="X-Client-Id", min_length=8, max_length=64)],
+) -> _Translated:
+    """An answer (or For you cards) in another language. Same order and count as sent."""
+    from app.core import prompts
+
+    if not body.texts:
+        return _Translated(texts=[])
+    user_hash = hash_user(settings.user_hash_salt.get_secret_value(), "web", client_id)
+    if not await limiter.allow(f"translate:{user_hash}", TRANSLATE_PER_HOUR):
+        raise HTTPException(429, "Too many translations. Please try again later.")
+    llm = _engine(settings, feeds.http)
+    if llm is None:
+        raise HTTPException(503, "Translation needs the AI key.")
+    numbered = "\n".join(f"<t{n}>{t}</t{n}>" for n, t in enumerate(body.texts))
+    try:
+        async with asyncio.timeout(40):
+            out = await llm.structured(
+                stage="translate",
+                system=prompts.render("translate_many.v1"),
+                user=f"Target language: {body.language}\n\n{numbered}",
+                output=_Translated,
+                effort="low",
+                max_tokens=6000,
+            )
+    except Exception as exc:
+        raise HTTPException(502, "Translation failed. Please try again.") from exc
+    if len(out.texts) != len(body.texts):
+        raise HTTPException(502, "Translation failed. Please try again.")
+    return out
