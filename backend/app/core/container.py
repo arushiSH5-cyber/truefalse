@@ -49,10 +49,14 @@ def _secret(value: object) -> str | None:
     return get() if get else None
 
 
+# Wikipedia and other public APIs block clients without a contact link, mostly from cloud hosts.
+USER_AGENT = "TrueFalse/0.1 (+https://github.com/arushiSH5-cyber/truefalse; misinformation checker)"
+
+
 def build_http_client(settings: Settings) -> httpx.AsyncClient:
     return httpx.AsyncClient(
         timeout=httpx.Timeout(settings.http_timeout_seconds),
-        headers={"User-Agent": "TrueFalse/0.1 (misinformation checker; research use)"},
+        headers={"User-Agent": USER_AGENT},
         follow_redirects=True,
     )
 

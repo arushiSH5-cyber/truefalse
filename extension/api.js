@@ -1,6 +1,6 @@
 // Talks to the TrueFalse web API (backend/app/api/web.py). Shared by every extension page.
 
-export const DEFAULT_API = "http://localhost:8000";
+export const DEFAULT_API = "https://truefalse.onrender.com";
 
 export async function apiUrl() {
   const { apiUrl } = await chrome.storage.sync.get({ apiUrl: DEFAULT_API });
