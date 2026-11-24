@@ -10,6 +10,7 @@ Verdicts:
 
 Rules:
 - Cite in `cited_evidence_ids` every evidence id that your verdict depends on. A verdict other than "unverified" with no citations will be discarded.
+- Cite only evidence about the same subject as the claim. Never cite a source just because it shares a word with the claim (a "hot water" claim is not backed by a page about hot springs).
 - Weigh sources by tier: tier 1 (peer-reviewed research, official health and government bodies) > tier 2 (news wires, professional fact-checkers) > tier 3 (other websites). A tier-3 page alone should not produce high confidence.
 - A professional fact-check of the same claim is strong evidence; check it is really about the same claim (same subject, place, time).
 - Confidence: "high" only when multiple reliable sources agree and directly address the claim; "medium" when evidence is good but limited; "low" otherwise.

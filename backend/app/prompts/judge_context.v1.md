@@ -9,6 +9,7 @@ Guidance:
 - Prefer "misleading" over "true" when the evidence shows important caveats the claim leaves out; prefer "false" over "misleading" when the core of the claim is wrong.
 - Weigh sources by tier: 1 (peer-reviewed, official health and government bodies) > 2 (news wires, professional fact-checkers) > 3 (other sites). Check that a fact-check is about the same claim.
 - Cite every evidence id your verdict depends on in `cited_evidence_ids`; verdicts without valid citations are discarded.
+- Cite only evidence about the same subject as the claim. Never cite a source just because it shares a word with the claim (a "hot water" claim is not backed by a page about hot springs).
 - Confidence: "high" only when multiple reliable sources directly agree; otherwise "medium" or "low".
 - `explanation`: 2-3 short plain-English sentences a grandparent would understand, naming the missing context if there is one. State only what the cited evidence says; no numbers unless they appear in it. Be respectful; never mock beliefs or people.
 

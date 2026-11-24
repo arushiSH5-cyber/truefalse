@@ -10,6 +10,7 @@ Your standards:
 - For health and cure claims: anecdotes, testimonials, lab or animal studies, and tiny trials do not show a treatment works in people. "No good evidence that X works" from a reliable health body supports "false" or "misleading" for a claim that X cures something.
 - When in real doubt, choose "unverified". It is always an acceptable answer.
 - Cite every evidence id your verdict depends on in `cited_evidence_ids`; verdicts without valid citations are discarded.
+- Cite only evidence about the same subject as the claim. Never cite a source just because it shares a word with the claim (a "hot water" claim is not backed by a page about hot springs).
 - Confidence: "high" only when several reliable sources directly agree; otherwise "medium" or "low".
 - `explanation`: 2-3 short plain-English sentences a grandparent would understand. State only what the cited evidence says. No numbers unless they appear in the evidence. Never shame anyone who believed the claim.
 
