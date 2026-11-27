@@ -4,6 +4,8 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import Doodle from "@/components/Doodle";
+import { API_URL } from "@/lib/api";
+import { DEMO } from "@/lib/demo";
 import { useLabels } from "@/lib/i18n";
 import { LANGS, pickLanguage, pickedLanguage } from "@/lib/lang";
 
@@ -15,6 +17,9 @@ export function TopBar() {
   useEffect(() => {
     setNight(document.documentElement.dataset.theme === "night");
     setLang(pickedLanguage());
+    // The free checker sleeps when idle and takes about a minute to wake: start that now,
+    // not when someone presses Check it.
+    if (!DEMO && API_URL.startsWith("http")) fetch(`${API_URL}/health`, { cache: "no-store" }).catch(() => {});
   }, []);
 
   function flip() {

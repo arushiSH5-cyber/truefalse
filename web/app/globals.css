@@ -613,3 +613,99 @@ dialog.camera video {
   justify-content: flex-end;
   margin-bottom: 8px;
 }
+
+/* ---- For you as reels: one myth per screen, swipe up for the next ---- */
+.reel-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.reels {
+  height: calc(100dvh - 250px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+  min-height: 420px;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scroll-snap-type: y mandatory;
+  scrollbar-width: none;
+  list-style: none;
+}
+.reels::-webkit-scrollbar {
+  display: none;
+}
+.reel {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 12px;
+  height: 100%;
+  padding: 18px;
+  border: 2px solid var(--line);
+  border-radius: 28px;
+  background: var(--card);
+  scroll-snap-align: start;
+  scroll-snap-stop: always;
+}
+.reel + .reel {
+  margin-top: 14px;
+}
+.reel-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.reel-body {
+  display: grid;
+  justify-items: center;
+  gap: 12px;
+  align-content: center;
+  min-height: 0;
+  overflow: hidden;
+  text-align: center;
+}
+.reel-body p {
+  margin: 0;
+}
+.reel-body .vstamp {
+  justify-self: center;
+}
+.reel-buddy {
+  width: clamp(72px, 12vh, 120px);
+  max-width: none;
+  margin: 0;
+}
+.reel-myth {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  overflow: hidden;
+  font-family: var(--font-display, inherit);
+  font-size: clamp(1.15rem, 4.2vw, 1.6rem);
+  line-height: 1.2;
+}
+.reel-myth.struck {
+  text-decoration: line-through;
+  text-decoration-thickness: 3px;
+  text-decoration-color: #d9536f;
+}
+.reel-truth {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 5;
+  overflow: hidden;
+  max-width: 36rem;
+  font-size: 1.05rem;
+}
+.reel-foot {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  text-align: center;
+}
+.reel-foot .row {
+  justify-content: center;
+}

@@ -1,12 +1,24 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Doodle from "@/components/Doodle";
 import { getForYou, type ForYouItem, type ForYouResult } from "@/lib/api";
 import { savedChecks } from "@/lib/history";
 import { type Labels, useLabels } from "@/lib/i18n";
 import { LANG_EVENT, uiLanguage } from "@/lib/lang";
+import { BAKED_MYTHS } from "@/lib/myths";
 import { headlineClaim } from "@/lib/verdicts";
+
+type Reel = ForYouItem & { key: string; fresh: boolean };
+
+const LOOK: Record<ForYouItem["verdict"], { buddy: string; pattern: string }> = {
+  false: { buddy: "berry-wow", pattern: "pat-gingham" },
+  misleading: { buddy: "pudding-think", pattern: "pat-check" },
+  mixed: { buddy: "pudding-think", pattern: "pat-check" },
+  true: { buddy: "mochi-happy", pattern: "pat-dots" },
+  "": { buddy: "luna-sleep", pattern: "pat-stripe" },
+};
 
 function badge(t: Labels, verdict: ForYouItem["verdict"]): string {
   return {
@@ -18,40 +30,81 @@ function badge(t: Labels, verdict: ForYouItem["verdict"]): string {
   }[verdict];
 }
 
-function MythCard({ item, t }: { item: ForYouItem; t: Labels }) {
-  const label = badge(t, item.verdict);
+/** Shown at once, before (or without) the checker answering. */
+const BAKED: Reel[] = BAKED_MYTHS.map((m) => ({
+  key: `baked:${m.myth}`,
+  fresh: false,
+  title: m.myth,
+  url: m.url,
+  publisher: m.publisher,
+  language: "en",
+  summary: m.truth,
+  published: null,
+  why: m.topic,
+  myth: m.myth,
+  verdict: "false",
+  truth: m.truth,
+}));
+
+function toReels(data: ForYouResult | null): Reel[] {
+  if (!data) return BAKED;
+  const fresh: Reel[] = data.items.map((i) => ({ ...i, key: `live:${i.url}`, fresh: true }));
+  const myths: Reel[] = (data.myths ?? []).map((i) => ({ ...i, key: `myth:${i.myth}`, fresh: false }));
+  // Live fact-checks first, then the common myths (the server's copy is ranked and translated).
+  const seen = new Set<string>();
+  return [...fresh, ...(myths.length ? myths : BAKED)].filter((r) => {
+    const id = (r.myth || r.title).toLowerCase();
+    if (seen.has(id)) return false;
+    seen.add(id);
+    return true;
+  });
+}
+
+function ReelCard({ reel, n, total, t }: { reel: Reel; n: number; total: number; t: Labels }) {
+  const look = LOOK[reel.verdict] ?? LOOK[""];
+  const label = badge(t, reel.verdict);
+  const myth = reel.myth || reel.title;
+  // A stated myth gets struck out; a headline (the fact-checker's own words) does not.
+  const stated = !!reel.myth && reel.myth.trim() !== reel.title.trim();
   return (
-    <li className="card myth">
-      <span className="small soft">
-        {item.publisher}
-        {item.published ? ` · ${new Date(item.published * 1000).toLocaleDateString()}` : ""}
-      </span>
-      {label && <span className={`vstamp vstamp-${item.verdict}`}>{label}</span>}
-      {item.myth ? (
+    <li className="reel">
+      <div className="reel-top small">
+        <span className="chip">{reel.fresh ? t.forYouLatest : reel.why || t.forYouMyths}</span>
+        <span className="soft">
+          {n} / {total}
+        </span>
+      </div>
+
+      <div className="reel-body">
+        <span className={`sticker reel-buddy ${look.pattern}`}>
+          <Doodle name={look.buddy} size={96} />
+        </span>
+        {label && <span className={`vstamp vstamp-${reel.verdict}`}>{label}</span>}
         <p className="wrap-any" dir="auto">
-          <span className="small soft block">{t.forYouMyth}</span>
-          <strong className={item.verdict === "false" ? "struck" : ""}>{item.myth}</strong>
+          {stated && <span className="small soft block">{t.forYouMyth}</span>}
+          <strong className={`reel-myth ${stated && reel.verdict === "false" ? "struck" : ""}`}>{myth}</strong>
         </p>
-      ) : (
-        <strong className="block wrap-any" dir="auto">
-          {item.title}
-        </strong>
-      )}
-      {item.truth && (
-        <p className="wrap-any" dir="auto">
-          <span className="small soft block">{t.forYouTruth}</span>
-          {item.truth}
-        </p>
-      )}
-      <div className="row">
-        <a className="btn" href={item.url} target="_blank" rel="noopener noreferrer">
-          {t.forYouRead}
-        </a>
-        {item.why && (
-          <span className="small why" dir="auto">
-            <Doodle name="heart" size={18} /> {item.why}
-          </span>
+        {reel.truth && (
+          <p className="wrap-any reel-truth" dir="auto" title={reel.truth}>
+            <span className="small soft block">{t.forYouTruth}</span>
+            {reel.truth}
+          </p>
         )}
+      </div>
+
+      <div className="reel-foot">
+        <span className="small soft">
+          {reel.publisher}
+          {reel.published ? ` · ${new Date(reel.published * 1000).toLocaleDateString()}` : ""}
+        </span>
+        <div className="row">
+          <a className="btn" href={reel.url} target="_blank" rel="noopener noreferrer">
+            {t.forYouRead}
+          </a>
+          <Link className="btn btn-main" href={`/?text=${encodeURIComponent(myth)}`}>
+            {t.forYouCheck}
+          </Link>
+        </div>
       </div>
     </li>
   );
@@ -60,17 +113,15 @@ function MythCard({ item, t }: { item: ForYouItem; t: Labels }) {
 export default function ForYou() {
   const t = useLabels();
   const [data, setData] = useState<ForYouResult | null>(null);
-  const [failed, setFailed] = useState(false);
-  const [hasChecks, setHasChecks] = useState(false);
+  const [loading, setLoading] = useState(true);
 
   const load = useCallback(() => {
-    setFailed(false);
-    setData(null);
+    setLoading(true);
     const recent = savedChecks().map((c) => headlineClaim(c.result)).filter(Boolean);
-    setHasChecks(recent.length > 0);
     getForYou(recent, uiLanguage())
       .then(setData)
-      .catch(() => setFailed(true));
+      .catch(() => {}) // keep the baked-in myths; the page is never empty
+      .finally(() => setLoading(false));
   }, []);
 
   useEffect(() => {
@@ -79,68 +130,23 @@ export default function ForYou() {
     return () => window.removeEventListener(LANG_EVENT, load);
   }, [load]);
 
-  const personal = hasChecks && !!data?.topics.length;
+  const reels = useMemo(() => toReels(data), [data]);
 
   return (
-    <div className="stack">
-      <h1 className="title">{t.navForYou}</h1>
-      <p className="small soft">{t.forYouNote}</p>
-
-      {personal && (
-        <div className="row">
-          <span className="small">{t.forYouBecause}:</span>
-          {data.topics.map((topic) => (
-            <span key={topic} className="chip">
-              {topic}
-            </span>
-          ))}
-        </div>
-      )}
-      {data && !hasChecks && (
-        <div className="card row">
-          <Doodle name="pudding-think" size={56} />
-          <span className="small soft min-w-0">{t.forYouEmpty}</span>
-        </div>
-      )}
-
-      {!data && !failed && (
-        <div className="card waiting">
-          <Doodle name="scout-think" size={120} />
-          <p className="hand text-xl">{t.checking}</p>
-        </div>
-      )}
-
-      {failed && (
-        <div className="card waiting">
-          <Doodle name="scout-sad" size={120} />
-          <p>{t.forYouFailed}</p>
-          <button type="button" className="btn btn-main mt-3" onClick={load}>
-            {t.forYouAgain}
-          </button>
-        </div>
-      )}
-
-      {!!data?.items.length && (
-        <>
-          <h2 className="hand text-xl">{t.forYouLatest}</h2>
-          <ul className="foryou">
-            {data.items.map((item) => (
-              <MythCard key={item.url} item={item} t={t} />
-            ))}
-          </ul>
-        </>
-      )}
-
-      {!!data?.myths?.length && (
-        <>
-          <h2 className="hand text-xl">{t.forYouMyths}</h2>
-          <ul className="foryou">
-            {data.myths.map((item) => (
-              <MythCard key={item.myth} item={item} t={t} />
-            ))}
-          </ul>
-        </>
-      )}
+    <div className="reel-page">
+      <div className="reel-head">
+        <h1 className="title">{t.navForYou}</h1>
+        {loading && (
+          <span className="small soft row">
+            <Doodle name="heart" size={18} /> {t.checking}
+          </span>
+        )}
+      </div>
+      <ul className="reels" aria-label={t.navForYou}>
+        {reels.map((reel, i) => (
+          <ReelCard key={reel.key} reel={reel} n={i + 1} total={reels.length} t={t} />
+        ))}
+      </ul>
     </div>
   );
 }
