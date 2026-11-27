@@ -1,8 +1,7 @@
 import CheckForm from "@/components/CheckForm";
 import DemoExamples from "@/components/DemoExamples";
-import InstallCard from "@/components/InstallCard";
 import PhoneQR from "@/components/PhoneQR";
-import { HomeIntro, HomeTip, Legend } from "@/components/HomeIntro";
+import { HomeIntro, Legend } from "@/components/HomeIntro";
 import { DEMO } from "@/lib/demo";
 
 export default function Home() {
@@ -11,9 +10,7 @@ export default function Home() {
       <HomeIntro />
       {DEMO ? <DemoExamples /> : <CheckForm />}
       <Legend />
-      <InstallCard />
       {DEMO && <PhoneQR />}
-      {!DEMO && <HomeTip />}
     </div>
   );
 }

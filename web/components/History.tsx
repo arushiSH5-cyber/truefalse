@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import Doodle from "@/components/Doodle";
+import { HomeTip } from "@/components/HomeIntro";
 import { STATIC } from "@/lib/demo";
 import { forgetAll, forgetCheck, savedChecks, type SavedCheck } from "@/lib/history";
 import { useLabels } from "@/lib/i18n";
@@ -66,6 +67,7 @@ export default function History() {
           </button>
         </>
       )}
+      <HomeTip />
     </div>
   );
 }
